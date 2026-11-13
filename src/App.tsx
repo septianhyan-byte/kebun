@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { AlertTriangle, BellRing, Cloud, Edit3, Info, Plus } from 'lucide-react';
 import { BOTANICAL_THEMES, FONT_OPTIONS, GROWTH_PHASE_SPECS } from './constants/themes';
 import { auth, googleProvider } from './firebase';
+import { useOnlineStatus } from './hooks/usePWAInstall';
 import {
   addGreenhouseToCloud,
   CloudSeasonMeta,
@@ -29,8 +30,12 @@ import {
   createGreenhouse,
   generatePlants,
   loadDocuments,
+  loadOfflineModePref,
+  loadPendingSyncQueue,
   loadSettings,
   saveDocuments,
+  saveOfflineModePref,
+  savePendingSyncQueue,
   saveSettings,
 } from './utils/storage';
 import {
@@ -80,7 +85,13 @@ export default function App() {
   const [printScope, setPrintScope] = useState<PrintScope>('all');
   const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([]);
 
-  // Firebase Auth & Real-Time Cloud Sync state
+  // Firebase Auth, Offline Mode & Real-Time Cloud Sync state
+  const isBrowserOnline = useOnlineStatus();
+  const [manualOfflineMode, setManualOfflineMode] = useState<boolean>(() => loadOfflineModePref());
+  const isEffectivelyOffline = !isBrowserOnline || manualOfflineMode;
+  const [pendingQueue, setPendingQueue] = useState<{ upsertIds: string[]; deleteIds: string[] }>(
+    () => loadPendingSyncQueue()
+  );
   const [cloudUser, setCloudUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
@@ -91,6 +102,11 @@ export default function App() {
   const autoUploadedUsersRef = useRef<Set<string>>(new Set());
   const docStoreRef = useRef(docStore);
   docStoreRef.current = docStore;
+  const pendingQueueRef = useRef(pendingQueue);
+  pendingQueueRef.current = pendingQueue;
+  const flushingRef = useRef(false);
+
+  const pendingSyncCount = pendingQueue.upsertIds.length + pendingQueue.deleteIds.length;
 
   const activeDoc = useMemo(() => {
     return (
@@ -138,27 +154,98 @@ export default function App() {
     saveDocuments(docStore.documents, docStore.activeDocId);
   }, [docStore]);
 
+  // Persist offline mode preference & pending sync queue
+  useEffect(() => {
+    saveOfflineModePref(manualOfflineMode);
+  }, [manualOfflineMode]);
+
+  useEffect(() => {
+    savePendingSyncQueue(pendingQueue.upsertIds, pendingQueue.deleteIds);
+  }, [pendingQueue]);
+
+  const enqueueUpsertSeason = useCallback((seasonId: string) => {
+    setPendingQueue((prev) => ({
+      upsertIds: prev.upsertIds.includes(seasonId) ? prev.upsertIds : [...prev.upsertIds, seasonId],
+      deleteIds: prev.deleteIds.filter((id) => id !== seasonId),
+    }));
+  }, []);
+
+  const enqueueDeleteSeason = useCallback((seasonId: string) => {
+    setPendingQueue((prev) => ({
+      upsertIds: prev.upsertIds.filter((id) => id !== seasonId),
+      deleteIds: prev.deleteIds.includes(seasonId) ? prev.deleteIds : [...prev.deleteIds, seasonId],
+    }));
+  }, []);
+
+  const flushPendingOfflineQueue = useCallback(async () => {
+    if (!cloudUser || isEffectivelyOffline || flushingRef.current) return;
+    const { upsertIds, deleteIds } = pendingQueueRef.current;
+    if (upsertIds.length === 0 && deleteIds.length === 0) return;
+
+    flushingRef.current = true;
+    setSyncBusy(true);
+    setSyncError('');
+    try {
+      const doneUpserts: string[] = [];
+      const doneDeletes: string[] = [];
+
+      for (const sId of upsertIds) {
+        const localDoc = docStoreRef.current.documents.find((d) => d.id === sId);
+        if (localDoc) {
+          await uploadSeasonToCloud(cloudUser, localDoc, deviceLabel);
+        }
+        doneUpserts.push(sId);
+      }
+
+      for (const sId of deleteIds) {
+        await deleteSeasonFromCloud(cloudUser, sId);
+        doneDeletes.push(sId);
+      }
+
+      setPendingQueue((prev) => ({
+        upsertIds: prev.upsertIds.filter((id) => !doneUpserts.includes(id)),
+        deleteIds: prev.deleteIds.filter((id) => !doneDeletes.includes(id)),
+      }));
+    } catch (err) {
+      setSyncError(
+        err instanceof Error
+          ? err.message
+          : 'Sebagian data offline belum tersinkronkan. Akan dicoba lagi saat sinyal stabil.'
+      );
+    } finally {
+      flushingRef.current = false;
+      setSyncBusy(false);
+    }
+  }, [cloudUser, isEffectivelyOffline, deviceLabel]);
+
+  // Auto-flush offline queue when connectivity & auth are ready
+  useEffect(() => {
+    if (authReady && cloudUser && !isEffectivelyOffline && pendingSyncCount > 0) {
+      void flushPendingOfflineQueue();
+    }
+  }, [authReady, cloudUser, isEffectivelyOffline, pendingSyncCount, flushPendingOfflineQueue]);
+
   // Listen to Firebase Auth state
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       setCloudUser(user);
       setAuthReady(true);
       setSyncError('');
-      if (user) {
+      if (user && isBrowserOnline && !manualOfflineMode) {
         void upsertUserProfile(user).catch((err) => {
           setSyncError(err instanceof Error ? err.message : 'Gagal memuat profil pengguna.');
         });
-      } else {
+      } else if (!user) {
         setCloudMetas([]);
         setActivities([]);
       }
     });
     return () => unsub();
-  }, []);
+  }, [isBrowserOnline, manualOfflineMode]);
 
-  // Subscribe to user's Cloud Seasons metadata when signed in
+  // Subscribe to user's Cloud Seasons metadata when signed in & online
   useEffect(() => {
-    if (!authReady || !cloudUser) return;
+    if (!authReady || !cloudUser || isEffectivelyOffline) return;
     const unsub = subscribeUserSeasons(cloudUser.uid, (metas) => {
       setCloudMetas(metas);
       if (metas.length === 0 && !autoUploadedUsersRef.current.has(cloudUser.uid)) {
@@ -173,14 +260,23 @@ export default function App() {
           })
           .finally(() => setSyncBusy(false));
       } else if (metas.length > 0) {
-        // Ensure activeDocId matches a cloud season if current activeDocId is not in cloud
+        const pendingUpserts = new Set(pendingQueueRef.current.upsertIds);
+        const pendingDeletes = new Set(pendingQueueRef.current.deleteIds);
+        const visibleMetas = metas.filter((m) => !pendingDeletes.has(m.id));
+        if (visibleMetas.length === 0) return;
+
         setDocStore((prev) => {
-          const existsInCloud = metas.some((m) => m.id === prev.activeDocId);
-          const nextActiveId = existsInCloud ? prev.activeDocId : metas[0].id;
-          // Keep existing hydrated placeholders for non-active seasons so list stays populated
-          const mergedDocs = metas.map((meta) => {
+          const existsInCloud = visibleMetas.some((m) => m.id === prev.activeDocId);
+          const nextActiveId =
+            existsInCloud || pendingUpserts.has(prev.activeDocId)
+              ? prev.activeDocId
+              : visibleMetas[0].id;
+          const mergedDocs = visibleMetas.map((meta) => {
             const existing = prev.documents.find((d) => d.id === meta.id);
             if (existing) {
+              if (pendingUpserts.has(meta.id)) {
+                return existing;
+              }
               return {
                 ...existing,
                 title: meta.title,
@@ -198,28 +294,36 @@ export default function App() {
               greenhouses: prev.documents[0]?.greenhouses || docStoreRef.current.documents[0].greenhouses,
             };
           });
+          // Preserve locally created offline documents not yet uploaded
+          const localOnlyPending = prev.documents.filter(
+            (d) => pendingUpserts.has(d.id) && !mergedDocs.some((m) => m.id === d.id)
+          );
           return {
-            documents: mergedDocs,
+            documents: [...localOnlyPending, ...mergedDocs],
             activeDocId: nextActiveId,
           };
         });
       }
     });
     return () => unsub();
-  }, [authReady, cloudUser, deviceLabel]);
+  }, [authReady, cloudUser, isEffectivelyOffline, deviceLabel]);
 
-  // Hydrate currently selected Cloud Season in real-time (greenhouses, waterLogs, treatments, plantBlocks, activities)
+  // Hydrate currently selected Cloud Season in real-time (skipped while offline or pending upload)
   const activeCloudMeta = useMemo(
     () => cloudMetas.find((m) => m.id === docStore.activeDocId) || cloudMetas[0] || null,
     [cloudMetas, docStore.activeDocId]
   );
 
   useEffect(() => {
-    if (!authReady || !cloudUser || !activeCloudMeta) return;
+    if (!authReady || !cloudUser || !activeCloudMeta || isEffectivelyOffline) return;
     const unsub = subscribeSeasonRealtime(
       cloudUser.uid,
       activeCloudMeta,
       (hydratedSeason) => {
+        // Protect locally modified offline documents until pending queue flushes
+        if (pendingQueueRef.current.upsertIds.includes(hydratedSeason.id)) {
+          return;
+        }
         setDocStore((prev) => ({
           ...prev,
           documents: prev.documents.map((d) =>
@@ -230,9 +334,14 @@ export default function App() {
       (acts) => setActivities(acts)
     );
     return () => unsub();
-  }, [authReady, cloudUser, activeCloudMeta]);
+  }, [authReady, cloudUser, activeCloudMeta, isEffectivelyOffline]);
 
   const handleSignInGoogle = async () => {
+    if (!isBrowserOnline) {
+      setSyncError('Perangkat sedang offline. Hubungkan internet terlebih dahulu untuk masuk Akun Google.');
+      return;
+    }
+    setManualOfflineMode(false);
     setSyncBusy(true);
     setSyncError('');
     try {
@@ -260,14 +369,24 @@ export default function App() {
     setDeviceLabel(saveDeviceLabel(label));
   };
 
+  const handleToggleManualOffline = () => {
+    setManualOfflineMode((prev) => !prev);
+    setSyncError('');
+  };
+
   const handleUploadLocalToCloud = async () => {
     if (!cloudUser) return;
+    if (isEffectivelyOffline) {
+      setSyncError('Mode Offline aktif / tidak ada internet. Data tetap tersimpan aman di perangkat.');
+      return;
+    }
     setSyncBusy(true);
     setSyncError('');
     try {
       for (const docItem of docStore.documents) {
         await uploadSeasonToCloud(cloudUser, docItem, deviceLabel);
       }
+      setPendingQueue({ upsertIds: [], deleteIds: [] });
     } catch (err) {
       setSyncError(err instanceof Error ? err.message : 'Gagal mengunggah data lokal ke Cloud.');
     } finally {
@@ -334,15 +453,19 @@ export default function App() {
     }));
 
     if (cloudUser) {
-      void syncGreenhouseDeltaToCloud({
-        user: cloudUser,
-        seasonId: currentSeason.id,
-        prevGh,
-        nextGh,
-        deviceLabel,
-      }).catch((err) => {
-        setSyncError(err instanceof Error ? err.message : 'Gagal menyinkronkan perubahan ke Cloud.');
-      });
+      if (isEffectivelyOffline) {
+        enqueueUpsertSeason(currentSeason.id);
+      } else {
+        void syncGreenhouseDeltaToCloud({
+          user: cloudUser,
+          seasonId: currentSeason.id,
+          prevGh,
+          nextGh,
+          deviceLabel,
+        }).catch(() => {
+          enqueueUpsertSeason(currentSeason.id);
+        });
+      }
     }
   };
 
@@ -350,9 +473,13 @@ export default function App() {
     const seasonId = activeDoc.id;
     updateActiveDoc((doc) => ({ ...doc, activeGhId: ghId }));
     if (cloudUser) {
-      void updateActiveGhInCloud(cloudUser, seasonId, ghId, deviceLabel).catch((err) => {
-        setSyncError(err instanceof Error ? err.message : 'Gagal memperbarui GH aktif.');
-      });
+      if (isEffectivelyOffline) {
+        enqueueUpsertSeason(seasonId);
+      } else {
+        void updateActiveGhInCloud(cloudUser, seasonId, ghId, deviceLabel).catch(() => {
+          enqueueUpsertSeason(seasonId);
+        });
+      }
     }
   };
 
@@ -393,9 +520,13 @@ export default function App() {
     }));
 
     if (cloudUser) {
-      void addGreenhouseToCloud(cloudUser, activeDoc.id, created, nextOrder, deviceLabel).catch(
-        (err) => setSyncError(err instanceof Error ? err.message : 'Gagal menambah GH ke Cloud.')
-      );
+      if (isEffectivelyOffline) {
+        enqueueUpsertSeason(activeDoc.id);
+      } else {
+        void addGreenhouseToCloud(cloudUser, activeDoc.id, created, nextOrder, deviceLabel).catch(
+          () => enqueueUpsertSeason(activeDoc.id)
+        );
+      }
     }
   };
 
@@ -461,15 +592,19 @@ export default function App() {
     }));
 
     if (cloudUser && deletedGh) {
-      void deleteGreenhouseFromCloud(
-        cloudUser,
-        activeDoc.id,
-        ghId,
-        deletedGh.name,
-        nextActiveId,
-        nextOrder,
-        deviceLabel
-      ).catch((err) => setSyncError(err instanceof Error ? err.message : 'Gagal menghapus GH di Cloud.'));
+      if (isEffectivelyOffline) {
+        enqueueUpsertSeason(activeDoc.id);
+      } else {
+        void deleteGreenhouseFromCloud(
+          cloudUser,
+          activeDoc.id,
+          ghId,
+          deletedGh.name,
+          nextActiveId,
+          nextOrder,
+          deviceLabel
+        ).catch(() => enqueueUpsertSeason(activeDoc.id));
+      }
     }
   };
 
@@ -524,9 +659,13 @@ export default function App() {
     }));
 
     if (cloudUser) {
-      void uploadSeasonToCloud(cloudUser, newDoc, deviceLabel).catch((err) => {
-        setSyncError(err instanceof Error ? err.message : 'Gagal menyimpan dokumen baru ke Cloud.');
-      });
+      if (isEffectivelyOffline) {
+        enqueueUpsertSeason(newDoc.id);
+      } else {
+        void uploadSeasonToCloud(cloudUser, newDoc, deviceLabel).catch(() => {
+          enqueueUpsertSeason(newDoc.id);
+        });
+      }
     }
   };
 
@@ -542,9 +681,13 @@ export default function App() {
       return { documents: remaining, activeDocId: nextActive };
     });
     if (cloudUser && docStore.documents.length > 1) {
-      void deleteSeasonFromCloud(cloudUser, docId).catch((err) => {
-        setSyncError(err instanceof Error ? err.message : 'Gagal menghapus dokumen di Cloud.');
-      });
+      if (isEffectivelyOffline) {
+        enqueueDeleteSeason(docId);
+      } else {
+        void deleteSeasonFromCloud(cloudUser, docId).catch(() => {
+          enqueueDeleteSeason(docId);
+        });
+      }
     }
   };
 
@@ -573,9 +716,13 @@ export default function App() {
       toDeleteInCloud
         .filter((id) => docStore.documents.length > 1 || id !== activeFallbackId)
         .forEach((id) => {
-          void deleteSeasonFromCloud(cloudUser, id).catch((err) => {
-            setSyncError(err instanceof Error ? err.message : 'Gagal menghapus arsip di Cloud.');
-          });
+          if (isEffectivelyOffline) {
+            enqueueDeleteSeason(id);
+          } else {
+            void deleteSeasonFromCloud(cloudUser, id).catch(() => {
+              enqueueDeleteSeason(id);
+            });
+          }
         });
     }
   };
@@ -589,9 +736,13 @@ export default function App() {
     });
     if (cloudUser) {
       toDelete.forEach((id) => {
-        void deleteSeasonFromCloud(cloudUser, id).catch((err) => {
-          setSyncError(err instanceof Error ? err.message : 'Gagal membersihkan arsip di Cloud.');
-        });
+        if (isEffectivelyOffline) {
+          enqueueDeleteSeason(id);
+        } else {
+          void deleteSeasonFromCloud(cloudUser, id).catch(() => {
+            enqueueDeleteSeason(id);
+          });
+        }
       });
     }
   };
@@ -602,9 +753,13 @@ export default function App() {
       activeDocId: doc.id,
     }));
     if (cloudUser) {
-      void uploadSeasonToCloud(cloudUser, doc, deviceLabel).catch((err) => {
-        setSyncError(err instanceof Error ? err.message : 'Gagal mengunggah dokumen impor ke Cloud.');
-      });
+      if (isEffectivelyOffline) {
+        enqueueUpsertSeason(doc.id);
+      } else {
+        void uploadSeasonToCloud(cloudUser, doc, deviceLabel).catch(() => {
+          enqueueUpsertSeason(doc.id);
+        });
+      }
     }
   };
 
@@ -637,6 +792,10 @@ export default function App() {
         onOpenAccountModal={() => setAccountModalOpen(true)}
         cloudUser={cloudUser}
         syncBusy={syncBusy}
+        isBrowserOnline={isBrowserOnline}
+        manualOfflineMode={manualOfflineMode}
+        pendingSyncCount={pendingSyncCount}
+        onToggleManualOffline={handleToggleManualOffline}
         alerts={alerts}
       />
 
@@ -920,9 +1079,22 @@ export default function App() {
         activities={activities}
         lastModifiedBy={activeCloudMeta?.lastModifiedBy || ''}
         localDocCount={docStore.documents.length}
+        isBrowserOnline={isBrowserOnline}
+        manualOfflineMode={manualOfflineMode}
+        pendingSyncCount={pendingSyncCount}
+        onToggleManualOffline={handleToggleManualOffline}
+        onSyncPendingNow={flushPendingOfflineQueue}
       />
 
-      <OfflineIndicator />
+      <OfflineIndicator
+        isBrowserOnline={isBrowserOnline}
+        manualOfflineMode={manualOfflineMode}
+        pendingCount={pendingSyncCount}
+        syncBusy={syncBusy}
+        isSignedIn={Boolean(cloudUser)}
+        onExitManualOffline={() => setManualOfflineMode(false)}
+        onSyncNow={() => void flushPendingOfflineQueue()}
+      />
 
       {/* Dedicated A4 Print Output */}
       <PrintableReport

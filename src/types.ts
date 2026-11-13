@@ -106,6 +106,7 @@ export interface PlantCondition {
   lastAction: string;
   notes: string;
   harvestDate?: string;
+  inspectionDate?: string;
   updatedAt: string;
 }
 

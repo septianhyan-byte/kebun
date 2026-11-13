@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
+  Calendar,
   CheckCircle2,
   Download,
   Droplets,
@@ -14,6 +15,12 @@ import {
 } from 'lucide-react';
 import { GROWTH_PHASE_SPECS } from '../constants/themes';
 import { GreenhouseData, GrowthPhase, NotificationSettings, WaterLogEntry } from '../types';
+import {
+  localDateTimeInputToIso,
+  matchesLocalDate,
+  toLocalDateInputValue,
+  toLocalDateTimeInputValue,
+} from '../utils/dateUtils';
 
 interface DashboardWaterControlProps {
   gh: GreenhouseData;
@@ -44,9 +51,11 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
   const [manualReservoir, setManualReservoir] = useState(String(currentWater.reservoirPct));
   const [manualOperator, setManualOperator] = useState('Budi Santoso');
   const [manualNote, setManualNote] = useState('');
+  const [inspectionDateTime, setInspectionDateTime] = useState(() => toLocalDateTimeInputValue());
 
   // History filter, selection & chart hover
   const [logFilter, setLogFilter] = useState<'all' | 'manual' | 'dosing'>('all');
+  const [dateFilter, setDateFilter] = useState<string>('');
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
   const [confirmClearAllLogs, setConfirmClearAllLogs] = useState(false);
@@ -64,6 +73,8 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     setNutrientAddedLiters('0');
     setPhChemical('none');
     setPhAdjMl('0');
+    setInspectionDateTime(toLocalDateTimeInputValue());
+    setDateFilter('');
     setSelectedLogIds([]);
     setConfirmClearAllLogs(false);
   }, [gh.id]);
@@ -209,9 +220,11 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     if (nutrientL > 0) autoParts.push(`Nutrisi +${nutrientL} L`);
     if (phChemical !== 'none' && phMl > 0) autoParts.push(`${phChemical} +${phMl} ml`);
 
+    const entryTimestamp = localDateTimeInputToIso(inspectionDateTime);
+
     const entry: WaterLogEntry = {
       id: `wlog-${Date.now()}`,
-      timestamp: new Date().toISOString(),
+      timestamp: entryTimestamp,
       ppmBefore: startPpm,
       ppm: endPpm,
       ec,
@@ -233,19 +246,27 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
         (autoParts.length > 0 ? autoParts.join(' · ') : 'Pengukuran manual TDS & pH meter'),
     };
 
-    onUpdateGh((prev) => ({
-      ...prev,
-      currentWater: {
-        ...prev.currentWater,
-        ppm: endPpm,
-        ec,
-        ph: endPh,
-        tempC,
-        flowLpm,
-        reservoirPct,
-      },
-      waterLogs: [entry, ...prev.waterLogs],
-    }));
+    onUpdateGh((prev) => {
+      const sortedLogs = [entry, ...prev.waterLogs].sort((a, b) =>
+        String(b.timestamp).localeCompare(String(a.timestamp))
+      );
+      const isNewest = sortedLogs[0]?.id === entry.id;
+      return {
+        ...prev,
+        currentWater: isNewest
+          ? {
+              ...prev.currentWater,
+              ppm: endPpm,
+              ec,
+              ph: endPh,
+              tempC,
+              flowLpm,
+              reservoirPct,
+            }
+          : prev.currentWater,
+        waterLogs: sortedLogs,
+      };
+    });
 
     // Advance initial values to newly saved final values
     setPpmBefore(String(endPpm));
@@ -320,22 +341,25 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
   };
 
   const filteredLogs = useMemo(() => {
-    if (logFilter === 'all') return gh.waterLogs;
-    if (logFilter === 'dosing') {
-      return gh.waterLogs.filter(
-        (l) =>
+    return gh.waterLogs.filter((l) => {
+      if (dateFilter && !matchesLocalDate(l.timestamp, dateFilter)) return false;
+      if (logFilter === 'all') return true;
+      if (logFilter === 'dosing') {
+        return (
           (l.waterAddedLiters || 0) > 0 ||
           (l.nutrientAddedLiters || 0) > 0 ||
           l.abMixAddedMl > 0 ||
           l.phAdjMl > 0
-      );
-    }
-    return gh.waterLogs.filter((l) => l.source === logFilter);
-  }, [gh.waterLogs, logFilter]);
+        );
+      }
+      return l.source === logFilter;
+    });
+  }, [gh.waterLogs, logFilter, dateFilter]);
 
   const chartPoints = useMemo(() => {
-    return [...gh.waterLogs].slice(0, 16).reverse();
-  }, [gh.waterLogs]);
+    const base = dateFilter ? filteredLogs : gh.waterLogs;
+    return [...base].slice(0, 16).reverse();
+  }, [gh.waterLogs, filteredLogs, dateFilter]);
 
   return (
     <div className="space-y-6">
@@ -564,6 +588,50 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
             </div>
 
             <form onSubmit={handleManualSubmit} className="mt-4 space-y-4">
+              {/* Pemilihan Tanggal & Jam Pemeriksaan */}
+              <div
+                className="rounded-lg border p-3.5 space-y-2"
+                style={{
+                  borderColor: 'var(--app-border)',
+                  backgroundColor: 'var(--app-canvas)',
+                }}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label
+                    htmlFor="water-inspection-datetime"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold"
+                  >
+                    <Calendar className="h-3.5 w-3.5" style={{ color: 'var(--app-accent)' }} />
+                    <span>Tanggal & Jam Pemeriksaan</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setInspectionDateTime(toLocalDateTimeInputValue())}
+                    className="rounded border px-2 py-0.5 text-[11px] font-medium cursor-pointer"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-surface)',
+                      color: 'var(--app-accent)',
+                    }}
+                  >
+                    Sekarang
+                  </button>
+                </div>
+                <input
+                  id="water-inspection-datetime"
+                  type="datetime-local"
+                  required
+                  value={inspectionDateTime}
+                  onChange={(e) => setInspectionDateTime(e.target.value)}
+                  className="w-full rounded-lg border px-3 py-2 text-xs sm:text-sm font-mono-tabular focus:outline-none"
+                  style={{
+                    borderColor: 'var(--app-border)',
+                    backgroundColor: 'var(--app-surface)',
+                    color: 'var(--app-text)',
+                  }}
+                />
+              </div>
+
               {/* 1. Tambah Air (Liter) */}
               <div
                 className="rounded-lg border p-3.5 space-y-2.5"
@@ -1020,7 +1088,9 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                     backgroundColor: 'var(--app-surface-muted)',
                   }}
                 >
-                  {new Date(chartPoints[hoverIdx].timestamp).toLocaleTimeString('id-ID', {
+                  {new Date(chartPoints[hoverIdx].timestamp).toLocaleString('id-ID', {
+                    day: '2-digit',
+                    month: 'short',
                     hour: '2-digit',
                     minute: '2-digit',
                   })}{' '}
@@ -1109,6 +1179,65 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                       {f.label}
                     </button>
                   ))}
+                </div>
+
+                {/* Filter Tanggal Pemeriksaan */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="relative flex items-center">
+                    <Calendar
+                      className="pointer-events-none absolute left-2.5 h-3.5 w-3.5"
+                      style={{ color: 'var(--app-text-muted)' }}
+                    />
+                    <input
+                      type="date"
+                      aria-label="Filter tanggal pemeriksaan air"
+                      value={dateFilter}
+                      onChange={(e) => setDateFilter(e.target.value)}
+                      className="h-8 rounded-lg border pl-8 pr-2 text-xs font-mono-tabular focus:outline-none"
+                      style={{
+                        borderColor: dateFilter ? 'var(--app-accent)' : 'var(--app-border)',
+                        backgroundColor: dateFilter ? 'var(--app-accent-soft)' : 'var(--app-canvas)',
+                        color: 'var(--app-text)',
+                      }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const today = toLocalDateInputValue();
+                      setDateFilter((prev) => (prev === today ? '' : today));
+                    }}
+                    className="h-8 rounded-lg border px-2.5 text-xs font-medium cursor-pointer whitespace-nowrap"
+                    style={{
+                      borderColor:
+                        dateFilter === toLocalDateInputValue()
+                          ? 'var(--app-accent)'
+                          : 'var(--app-border)',
+                      backgroundColor:
+                        dateFilter === toLocalDateInputValue()
+                          ? 'var(--app-accent-soft)'
+                          : 'transparent',
+                      color:
+                        dateFilter === toLocalDateInputValue()
+                          ? 'var(--app-accent)'
+                          : 'var(--app-text)',
+                    }}
+                  >
+                    Hari Ini
+                  </button>
+                  {dateFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setDateFilter('')}
+                      className="h-8 rounded-lg border px-2 text-xs font-medium cursor-pointer whitespace-nowrap"
+                      style={{
+                        borderColor: 'var(--app-border)',
+                        color: 'var(--app-text-muted)',
+                      }}
+                    >
+                      Semua Tgl
+                    </button>
+                  )}
                 </div>
 
                 <button
@@ -1264,6 +1393,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                               {new Date(log.timestamp).toLocaleString('id-ID', {
                                 day: '2-digit',
                                 month: 'short',
+                                year: 'numeric',
                                 hour: '2-digit',
                                 minute: '2-digit',
                               })}
@@ -1411,6 +1541,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                               {new Date(log.timestamp).toLocaleString('id-ID', {
                                 day: '2-digit',
                                 month: 'short',
+                                year: 'numeric',
                                 hour: '2-digit',
                                 minute: '2-digit',
                               })}

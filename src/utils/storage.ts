@@ -329,3 +329,48 @@ export function saveDocuments(documents: SeasonDocument[], activeDocId: string):
     // ignore storage quota errors
   }
 }
+
+const OFFLINE_MODE_KEY = 'melonflow_offline_mode_v1';
+const PENDING_SYNC_KEY = 'melonflow_pending_sync_seasons_v1';
+const PENDING_DELETE_KEY = 'melonflow_pending_delete_seasons_v1';
+
+export function loadOfflineModePref(): boolean {
+  try {
+    return localStorage.getItem(OFFLINE_MODE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function saveOfflineModePref(enabled: boolean): void {
+  try {
+    localStorage.setItem(OFFLINE_MODE_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+export function loadPendingSyncQueue(): { upsertIds: string[]; deleteIds: string[] } {
+  try {
+    const upRaw = localStorage.getItem(PENDING_SYNC_KEY);
+    const delRaw = localStorage.getItem(PENDING_DELETE_KEY);
+    const upsertIds = upRaw ? (JSON.parse(upRaw) as string[]) : [];
+    const deleteIds = delRaw ? (JSON.parse(delRaw) as string[]) : [];
+    return {
+      upsertIds: Array.isArray(upsertIds) ? upsertIds : [],
+      deleteIds: Array.isArray(deleteIds) ? deleteIds : [],
+    };
+  } catch {
+    return { upsertIds: [], deleteIds: [] };
+  }
+}
+
+export function savePendingSyncQueue(upsertIds: string[], deleteIds: string[]): void {
+  try {
+    localStorage.setItem(PENDING_SYNC_KEY, JSON.stringify(Array.from(new Set(upsertIds))));
+    localStorage.setItem(PENDING_DELETE_KEY, JSON.stringify(Array.from(new Set(deleteIds))));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+

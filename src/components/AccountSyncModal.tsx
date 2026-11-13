@@ -12,8 +12,11 @@ import {
   Smartphone,
   UploadCloud,
   Users,
+  Wifi,
+  WifiOff,
   X,
 } from 'lucide-react';
+import { useSWOfflineStatus } from '../hooks/usePWAInstall';
 import type { SupervisionActivity } from '../types';
 
 interface AccountSyncModalProps {
@@ -31,6 +34,11 @@ interface AccountSyncModalProps {
   activities: SupervisionActivity[];
   lastModifiedBy: string;
   localDocCount: number;
+  isBrowserOnline: boolean;
+  manualOfflineMode: boolean;
+  pendingSyncCount: number;
+  onToggleManualOffline: () => void;
+  onSyncPendingNow: () => Promise<void>;
 }
 
 const CATEGORY_LABELS: Record<SupervisionActivity['category'], string> = {
@@ -56,9 +64,16 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
   activities,
   lastModifiedBy,
   localDocCount,
+  isBrowserOnline,
+  manualOfflineMode,
+  pendingSyncCount,
+  onToggleManualOffline,
+  onSyncPendingNow,
 }) => {
   const [labelInput, setLabelInput] = useState(deviceLabel);
   const [savedLabelFeedback, setSavedLabelFeedback] = useState(false);
+  const { offlineReady } = useSWOfflineStatus();
+  const isOffline = !isBrowserOnline || manualOfflineMode;
 
   if (!isOpen) return null;
 
@@ -215,6 +230,80 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
                 {syncError}
               </div>
             )}
+          </div>
+
+          {/* Offline Mode & Local Cache Status Card */}
+          <div
+            className="rounded-xl border p-4 space-y-3"
+            style={{
+              borderColor: isOffline ? '#d97706' : 'var(--app-border)',
+              backgroundColor: isOffline ? 'rgba(245, 158, 11, 0.08)' : 'var(--app-canvas)',
+            }}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-xs font-bold">
+                  {isOffline ? (
+                    <WifiOff className="h-4 w-4 text-amber-600 shrink-0" />
+                  ) : (
+                    <Wifi className="h-4 w-4 text-emerald-600 shrink-0" />
+                  )}
+                  <span>
+                    {isOffline ? 'Mode Offline Aktif' : 'Koneksi Online Aktif'}
+                  </span>
+                  <span
+                    className="rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                    style={{
+                      backgroundColor: offlineReady ? 'rgba(22, 163, 74, 0.14)' : 'var(--app-surface-muted)',
+                      color: offlineReady ? '#15803d' : 'var(--app-text-muted)',
+                    }}
+                  >
+                    {offlineReady ? 'Cache Offline Siap' : 'Cache Lokal Aktif'}
+                  </span>
+                </div>
+                <p className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                  Aplikasi tetap dapat dibuka & diinput penuh tanpa sinyal internet. Data tersimpan otomatis di perangkat dan disinkronkan saat online kembali.
+                  {pendingSyncCount > 0 && (
+                    <>
+                      {' '}
+                      <strong className="text-amber-700 dark:text-amber-300">
+                        ({pendingSyncCount} dokumen menunggu sinkronisasi ke Cloud)
+                      </strong>
+                    </>
+                  )}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={onToggleManualOffline}
+                  className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold cursor-pointer"
+                  style={{
+                    borderColor: manualOfflineMode ? '#d97706' : 'var(--app-border)',
+                    backgroundColor: 'var(--app-surface)',
+                    color: manualOfflineMode ? '#b45309' : 'var(--app-text)',
+                  }}
+                >
+                  {manualOfflineMode ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
+                  {manualOfflineMode ? 'Matikan Mode Offline' : 'Aktifkan Mode Offline'}
+                </button>
+                {user && !isOffline && pendingSyncCount > 0 && (
+                  <button
+                    type="button"
+                    disabled={syncBusy}
+                    onClick={() => void onSyncPendingNow()}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold cursor-pointer disabled:opacity-60"
+                    style={{
+                      backgroundColor: 'var(--app-accent)',
+                      color: 'var(--app-accent-fg)',
+                    }}
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${syncBusy ? 'animate-spin' : ''}`} />
+                    Sinkronkan ({pendingSyncCount})
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Device / Operator Identity for Supervision */}

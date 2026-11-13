@@ -3,6 +3,7 @@ import {
   AlertCircle,
   Apple,
   ArrowDown,
+  Calendar,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -20,6 +21,12 @@ import {
   PlantCondition,
   PlantHealthStatus,
 } from '../types';
+import {
+  formatDateShortId,
+  localDateInputToIsoWithCurrentTime,
+  matchesLocalDate,
+  toLocalDateInputValue,
+} from '../utils/dateUtils';
 
 interface DashboardPlantsMatrixProps {
   gh: GreenhouseData;
@@ -41,9 +48,14 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
   const [activeBlock, setActiveBlock] = useState(0); // 0 = 1-100, 1 = 101-200...
   const [statusFilter, setStatusFilter] = useState<'all' | PlantHealthStatus>('all');
   const [fruitingFilter, setFruitingFilter] = useState<'all' | FruitingStatus>('all');
+  const [dateFilter, setDateFilter] = useState<string>('');
   const [jumpNumber, setJumpNumber] = useState('');
   const [selectedId, setSelectedId] = useState<number>(1);
   const [hoveredPlant, setHoveredPlant] = useState<PlantCondition | null>(null);
+
+  // Sticky inspection date option for recording backdated plant inspections sequentially
+  const [lockInspectionDate, setLockInspectionDate] = useState(false);
+  const [lockedInspectionDate, setLockedInspectionDate] = useState(() => toLocalDateInputValue());
 
   // Batch range manual fill & multi-select delete
   const [showBatchPanel, setShowBatchPanel] = useState(false);
@@ -54,6 +66,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
   const [batchSymptom, setBatchSymptom] = useState('');
   const [batchAction, setBatchAction] = useState('');
   const [batchHarvestDate, setBatchHarvestDate] = useState('');
+  const [batchInspectionDate, setBatchInspectionDate] = useState(() => toLocalDateInputValue());
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [selectedPlantIds, setSelectedPlantIds] = useState<number[]>([]);
   const [confirmClearAllPlants, setConfirmClearAllPlants] = useState(false);
@@ -62,6 +75,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     setSelectedPlantIds([]);
     setMultiSelectMode(false);
     setConfirmClearAllPlants(false);
+    setDateFilter('');
   }, [gh.id]);
 
   useEffect(() => {
@@ -98,9 +112,10 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     return base.filter((p) => {
       if (statusFilter !== 'all' && p.status !== statusFilter) return false;
       if (fruitingFilter !== 'all' && getFruiting(p) !== fruitingFilter) return false;
+      if (dateFilter && !matchesLocalDate(p.inspectionDate || p.updatedAt, dateFilter)) return false;
       return true;
     });
-  }, [gh.plants, viewMode, activeBlock, statusFilter, fruitingFilter]);
+  }, [gh.plants, viewMode, activeBlock, statusFilter, fruitingFilter, dateFilter]);
 
   const selectedPlant = useMemo(() => {
     return gh.plants[selectedId - 1] || gh.plants[0];
@@ -120,6 +135,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     if (!Number.isNaN(num) && num >= 1 && num <= gh.plants.length) {
       setStatusFilter('all');
       setFruitingFilter('all');
+      setDateFilter('');
       handleSelectPlant(num);
     }
   };
@@ -129,10 +145,22 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       const nextPlants = [...prev.plants];
       const idx = id - 1;
       if (!nextPlants[idx]) return prev;
+      const chosenDate =
+        patch.inspectionDate !== undefined
+          ? patch.inspectionDate
+          : lockInspectionDate
+          ? lockedInspectionDate
+          : toLocalDateInputValue();
+      const nextUpdatedAt =
+        patch.inspectionDate !== undefined || lockInspectionDate
+          ? localDateInputToIsoWithCurrentTime(chosenDate || toLocalDateInputValue())
+          : new Date().toISOString();
+
       nextPlants[idx] = {
         ...nextPlants[idx],
         ...patch,
-        updatedAt: new Date().toISOString(),
+        inspectionDate: chosenDate,
+        updatedAt: nextUpdatedAt,
       };
       return { ...prev, plants: nextPlants };
     });
@@ -142,7 +170,8 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     e.preventDefault();
     const start = Math.max(1, Math.min(gh.plants.length, parseInt(rangeStart, 10) || 1));
     const end = Math.max(start, Math.min(gh.plants.length, parseInt(rangeEnd, 10) || start));
-    const now = new Date().toISOString();
+    const chosenInspectionDate = batchInspectionDate || toLocalDateInputValue();
+    const stampedIso = localDateInputToIsoWithCurrentTime(chosenInspectionDate);
 
     onUpdateGh((prev) => {
       const nextPlants = prev.plants.map((p) => {
@@ -164,7 +193,8 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
             symptom: batchSymptom.trim() || p.symptom,
             lastAction: batchAction.trim() || p.lastAction,
             harvestDate: batchHarvestDate || p.harvestDate,
-            updatedAt: now,
+            inspectionDate: chosenInspectionDate,
+            updatedAt: stampedIso,
           };
         }
         return p;
@@ -458,39 +488,100 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
               </button>
             </div>
 
-            {/* Jump to plant # */}
-            <form onSubmit={handleJump} className="flex items-center gap-1.5">
-              <div className="relative">
-                <Search
-                  className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
-                  style={{ color: 'var(--app-text-muted)' }}
-                />
-                <input
-                  type="number"
-                  min={1}
-                  max={gh.plants.length}
-                  value={jumpNumber}
-                  onChange={(e) => setJumpNumber(e.target.value)}
-                  placeholder={`No. 1–${gh.plants.length}`}
-                  className="h-9 w-32 rounded-lg border pl-8 pr-2 text-xs font-mono-tabular focus:outline-none"
-                  style={{
-                    borderColor: 'var(--app-border)',
-                    backgroundColor: 'var(--app-canvas)',
-                    color: 'var(--app-text)',
+            {/* Jump to plant # + Filter Tanggal Pemeriksaan */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5">
+                <div className="relative flex items-center">
+                  <Calendar
+                    className="pointer-events-none absolute left-2.5 h-3.5 w-3.5"
+                    style={{ color: 'var(--app-text-muted)' }}
+                  />
+                  <input
+                    type="date"
+                    aria-label="Filter tanggal pemeriksaan tanaman"
+                    title="Filter tanaman berdasarkan tanggal pemeriksaan"
+                    value={dateFilter}
+                    onChange={(e) => setDateFilter(e.target.value)}
+                    className="h-9 rounded-lg border pl-8 pr-2 text-xs font-mono-tabular focus:outline-none"
+                    style={{
+                      borderColor: dateFilter ? 'var(--app-accent)' : 'var(--app-border)',
+                      backgroundColor: dateFilter ? 'var(--app-accent-soft)' : 'var(--app-canvas)',
+                      color: 'var(--app-text)',
+                    }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = toLocalDateInputValue();
+                    setDateFilter((prev) => (prev === today ? '' : today));
                   }}
-                />
+                  className="h-9 rounded-lg border px-2.5 text-xs font-medium cursor-pointer whitespace-nowrap"
+                  style={{
+                    borderColor:
+                      dateFilter === toLocalDateInputValue()
+                        ? 'var(--app-accent)'
+                        : 'var(--app-border)',
+                    backgroundColor:
+                      dateFilter === toLocalDateInputValue()
+                        ? 'var(--app-accent-soft)'
+                        : 'transparent',
+                    color:
+                      dateFilter === toLocalDateInputValue()
+                        ? 'var(--app-accent)'
+                        : 'var(--app-text)',
+                  }}
+                >
+                  Hari Ini
+                </button>
+                {dateFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setDateFilter('')}
+                    className="h-9 rounded-lg border px-2 text-xs font-medium cursor-pointer whitespace-nowrap"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      color: 'var(--app-text-muted)',
+                    }}
+                  >
+                    Semua Tgl
+                  </button>
+                )}
               </div>
-              <button
-                type="submit"
-                className="h-9 rounded-lg px-3 text-xs font-semibold cursor-pointer whitespace-nowrap"
-                style={{
-                  backgroundColor: 'var(--app-accent)',
-                  color: 'var(--app-accent-fg)',
-                }}
-              >
-                Cari No.
-              </button>
-            </form>
+
+              <form onSubmit={handleJump} className="flex items-center gap-1.5">
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
+                    style={{ color: 'var(--app-text-muted)' }}
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    max={gh.plants.length}
+                    value={jumpNumber}
+                    onChange={(e) => setJumpNumber(e.target.value)}
+                    placeholder={`No. 1–${gh.plants.length}`}
+                    className="h-9 w-28 rounded-lg border pl-8 pr-2 text-xs font-mono-tabular focus:outline-none"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-canvas)',
+                      color: 'var(--app-text)',
+                    }}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="h-9 rounded-lg px-3 text-xs font-semibold cursor-pointer whitespace-nowrap"
+                  style={{
+                    backgroundColor: 'var(--app-accent)',
+                    color: 'var(--app-accent-fg)',
+                  }}
+                >
+                  Cari No.
+                </button>
+              </form>
+            </div>
           </div>
 
           {/* Bulk Delete Controls Bar for Plants */}
@@ -705,6 +796,20 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                   />
                 </div>
                 <div className="col-span-2 sm:col-span-3 lg:col-span-2">
+                  <label className="block text-[11px] font-medium mb-1">Tanggal Pemeriksaan</label>
+                  <input
+                    type="date"
+                    value={batchInspectionDate}
+                    onChange={(e) => setBatchInspectionDate(e.target.value)}
+                    className="w-full rounded-md border px-2.5 py-1.5 text-xs font-mono-tabular"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-surface)',
+                      color: 'var(--app-text)',
+                    }}
+                  />
+                </div>
+                <div className="col-span-2 sm:col-span-3 lg:col-span-2">
                   <label className="block text-[11px] font-medium mb-1">Tanggal Panen Manual (Opsional)</label>
                   <input
                     type="date"
@@ -798,11 +903,14 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
               {hoveredPlant ? (
                 <span>
                   <strong>#{hoveredPlant.id}</strong> · {PLANT_STATUS_META[hoveredPlant.status].short} ·{' '}
-                  {FRUITING_STATUS_META[getFruiting(hoveredPlant)].short} · {hoveredPlant.symptom}
+                  {FRUITING_STATUS_META[getFruiting(hoveredPlant)].short} ·{' '}
+                  {formatDateShortId(hoveredPlant.inspectionDate || hoveredPlant.updatedAt)} ·{' '}
+                  {hoveredPlant.symptom}
                 </span>
               ) : (
                 <span style={{ color: 'var(--app-text-muted)' }}>
                   Menampilkan {visiblePlants.length.toLocaleString('id-ID')} tanaman
+                  {dateFilter ? ` (Tgl periksa: ${formatDateShortId(dateFilter)})` : ''}
                 </span>
               )}
             </div>
@@ -982,6 +1090,81 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                     <ChevronRight className="h-4 w-4" />
                   </button>
                 </div>
+              </div>
+
+              {/* Pemilihan Tanggal Pemeriksaan Tanaman */}
+              <div
+                className="rounded-lg border p-3 space-y-2"
+                style={{
+                  borderColor: 'var(--app-border)',
+                  backgroundColor: 'var(--app-canvas)',
+                }}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label
+                    htmlFor="plant-inspection-date"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold"
+                  >
+                    <Calendar className="h-3.5 w-3.5" style={{ color: 'var(--app-accent)' }} />
+                    <span>Tanggal Pemeriksaan</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const today = toLocalDateInputValue();
+                      setLockedInspectionDate(today);
+                      updateSinglePlant(selectedPlant.id, { inspectionDate: today });
+                    }}
+                    className="rounded border px-2 py-0.5 text-[11px] font-medium cursor-pointer"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-surface)',
+                      color: 'var(--app-accent)',
+                    }}
+                  >
+                    Hari Ini
+                  </button>
+                </div>
+                <input
+                  id="plant-inspection-date"
+                  type="date"
+                  value={
+                    lockInspectionDate
+                      ? lockedInspectionDate
+                      : selectedPlant.inspectionDate || toLocalDateInputValue(selectedPlant.updatedAt)
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val) {
+                      setLockedInspectionDate(val);
+                      updateSinglePlant(selectedPlant.id, { inspectionDate: val });
+                    }
+                  }}
+                  className="w-full rounded-lg border px-3 py-1.5 text-xs sm:text-sm font-mono-tabular focus:outline-none"
+                  style={{
+                    borderColor: 'var(--app-border)',
+                    backgroundColor: 'var(--app-surface)',
+                    color: 'var(--app-text)',
+                  }}
+                />
+                <label className="flex items-center gap-2 text-[11px] cursor-pointer select-none" style={{ color: 'var(--app-text-muted)' }}>
+                  <input
+                    type="checkbox"
+                    checked={lockInspectionDate}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setLockInspectionDate(checked);
+                      if (checked) {
+                        const currentVal =
+                          selectedPlant.inspectionDate ||
+                          toLocalDateInputValue(selectedPlant.updatedAt);
+                        setLockedInspectionDate(currentVal);
+                      }
+                    }}
+                    className="h-3.5 w-3.5 accent-emerald-600 cursor-pointer"
+                  />
+                  <span>Gunakan tanggal ini otomatis saat memeriksa tanaman lain</span>
+                </label>
               </div>
 
               {/* Status Kesehatan */}
@@ -1232,7 +1415,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
 
               <div className="flex items-center justify-between pt-2 border-t" style={{ borderColor: 'var(--app-border)' }}>
                 <span className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
-                  Diperbarui: {new Date(selectedPlant.updatedAt).toLocaleString('id-ID')}
+                  Tgl Periksa: {formatDateShortId(selectedPlant.inspectionDate || selectedPlant.updatedAt)}
                 </span>
                 <button
                   type="button"

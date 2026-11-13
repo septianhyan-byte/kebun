@@ -79,3 +79,43 @@ export function useOnlineStatus() {
 
   return isOnline;
 }
+
+export function useSWOfflineStatus() {
+  const [offlineReady, setOfflineReady] = useState(false);
+  const [needRefresh, setNeedRefresh] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistration().then((reg) => {
+        if (active && reg?.active) {
+          setOfflineReady(true);
+        }
+      }).catch(() => {
+        // ignore SW lookup errors
+      });
+    }
+
+    const onReady = () => setOfflineReady(true);
+    const onRefresh = () => setNeedRefresh(true);
+
+    window.addEventListener('melonflow:sw-offline-ready', onReady);
+    window.addEventListener('melonflow:sw-need-refresh', onRefresh);
+    return () => {
+      active = false;
+      window.removeEventListener('melonflow:sw-offline-ready', onReady);
+      window.removeEventListener('melonflow:sw-need-refresh', onRefresh);
+    };
+  }, []);
+
+  const applyUpdate = async () => {
+    const fn = (window as unknown as { __melonflowUpdateSW?: (reload?: boolean) => Promise<void> }).__melonflowUpdateSW;
+    if (fn) {
+      await fn(true);
+    } else {
+      window.location.reload();
+    }
+  };
+
+  return { offlineReady, needRefresh, applyUpdate };
+}

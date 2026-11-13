@@ -146,6 +146,7 @@ function cleanPlantForCloud(p: PlantCondition): PlantCondition {
     lastAction: String(p.lastAction || '').slice(0, 160),
     notes: String(p.notes || '').slice(0, 300),
     harvestDate: p.harvestDate ? String(p.harvestDate).slice(0, 32) : '',
+    inspectionDate: p.inspectionDate ? String(p.inspectionDate).slice(0, 32) : '',
     updatedAt: String(p.updatedAt || new Date().toISOString()).slice(0, 64),
   };
 }

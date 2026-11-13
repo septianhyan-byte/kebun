@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Cloud,
   CloudOff,
+  Download,
   FilePlus2,
   Plus,
   Printer,
@@ -12,6 +13,8 @@ import {
   Settings,
   Smartphone,
   Sprout,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { AppAlert, DashboardTab, GreenhouseData, SeasonDocument } from '../types';
@@ -30,6 +33,10 @@ interface TopToolbarProps {
   onOpenAccountModal: () => void;
   cloudUser: User | null;
   syncBusy: boolean;
+  isBrowserOnline: boolean;
+  manualOfflineMode: boolean;
+  pendingSyncCount: number;
+  onToggleManualOffline: () => void;
   alerts: AppAlert[];
 }
 
@@ -47,10 +54,15 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
   onOpenAccountModal,
   cloudUser,
   syncBusy,
+  isBrowserOnline,
+  manualOfflineMode,
+  pendingSyncCount,
+  onToggleManualOffline,
   alerts,
 }) => {
   const criticalCount = alerts.filter((a) => a.level === 'critical').length;
-  const { isInstallable } = usePWAInstall();
+  const { isInstallable, isInstalled, install } = usePWAInstall();
+  const isOffline = !isBrowserOnline || manualOfflineMode;
 
   return (
     <header
@@ -177,33 +189,85 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
             </button>
           </div>
 
+          {/* Mode Offline Toggle */}
+          <button
+            type="button"
+            onClick={onToggleManualOffline}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-2.5 sm:px-3 text-xs sm:text-sm font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer hover:opacity-85"
+            style={{
+              borderColor: isOffline ? '#d97706' : 'var(--app-border)',
+              backgroundColor: isOffline ? 'rgba(245, 158, 11, 0.14)' : 'var(--app-surface)',
+              color: isOffline ? '#b45309' : 'var(--app-text)',
+            }}
+            title={
+              !isBrowserOnline
+                ? 'Perangkat sedang offline — data disimpan di perangkat'
+                : manualOfflineMode
+                ? 'Mode Offline aktif — klik untuk kembali Online'
+                : 'Klik untuk mengaktifkan Mode Offline (bekerja tanpa internet / hemat kuota)'
+            }
+          >
+            {isOffline ? (
+              <WifiOff className="h-4 w-4 text-amber-600" />
+            ) : (
+              <Wifi className="h-4 w-4" style={{ color: 'var(--app-accent)' }} />
+            )}
+            <span className="text-[11px] sm:text-xs font-semibold">
+              {isOffline ? 'Mode Offline' : 'Online'}
+            </span>
+          </button>
+
           {/* Google Account Online Sync & Supervision */}
           <button
             type="button"
             onClick={onOpenAccountModal}
             className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-2.5 sm:px-3 text-xs sm:text-sm font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer hover:opacity-85"
             style={{
-              borderColor: cloudUser ? '#16a34a' : 'var(--app-border)',
-              backgroundColor: cloudUser ? 'rgba(22, 163, 74, 0.1)' : 'var(--app-surface)',
-              color: cloudUser ? '#15803d' : 'var(--app-text)',
+              borderColor: cloudUser && !isOffline ? '#16a34a' : 'var(--app-border)',
+              backgroundColor:
+                cloudUser && !isOffline ? 'rgba(22, 163, 74, 0.1)' : 'var(--app-surface)',
+              color: cloudUser && !isOffline ? '#15803d' : 'var(--app-text)',
             }}
             title={
               cloudUser
-                ? `Online Akun Google (${cloudUser.email}) — Klik untuk pengawasan & sinkronisasi`
+                ? `Akun Google (${cloudUser.email}) — Klik untuk pengawasan & sinkronisasi`
                 : 'Masuk Akun Google untuk berbagi data real-time & saling mengawasi'
             }
           >
             {syncBusy ? (
               <RefreshCw className="h-4 w-4 animate-spin" style={{ color: 'var(--app-accent)' }} />
-            ) : cloudUser ? (
+            ) : cloudUser && !isOffline ? (
               <Cloud className="h-4 w-4 text-emerald-600" />
             ) : (
               <CloudOff className="h-4 w-4" style={{ color: 'var(--app-text-muted)' }} />
             )}
             <span className="text-[11px] sm:text-xs font-semibold">
-              {cloudUser ? 'Online' : 'Google Sync'}
+              {cloudUser ? (isOffline ? 'Antre Sync' : 'Cloud Sync') : 'Google Sync'}
             </span>
+            {pendingSyncCount > 0 && (
+              <span className="rounded-full bg-amber-500 px-1.5 py-0.2 text-[10px] font-mono-tabular font-bold text-white">
+                {pendingSyncCount}
+              </span>
+            )}
           </button>
+
+          {/* Direct PWA Install button when browser supports one-tap install */}
+          {isInstallable && !isInstalled && (
+            <button
+              type="button"
+              onClick={() => void install()}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-2.5 sm:px-3 text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer hover:opacity-90"
+              style={{
+                borderColor: 'var(--app-accent)',
+                backgroundColor: 'var(--app-accent-soft)',
+                color: 'var(--app-accent)',
+              }}
+              title="Install MelonFlow sebagai Aplikasi Offline di perangkat ini"
+            >
+              <Download className="h-4 w-4" />
+              <span className="text-[11px] sm:text-xs">Install</span>
+            </button>
+          )}
 
           {/* 4. Versi HP / Tablet & APK */}
           <button
@@ -211,9 +275,9 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
             onClick={onOpenMobileApkModal}
             className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-2.5 sm:px-3 text-xs sm:text-sm font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer hover:opacity-85"
             style={{
-              borderColor: isInstallable ? 'var(--app-accent)' : 'var(--app-border)',
-              backgroundColor: isInstallable ? 'var(--app-accent-soft)' : 'var(--app-surface)',
-              color: isInstallable ? 'var(--app-accent)' : 'var(--app-text)',
+              borderColor: 'var(--app-border)',
+              backgroundColor: 'var(--app-surface)',
+              color: 'var(--app-text)',
             }}
             title="Install di HP/Tablet atau Unduh Paket APK Android"
           >

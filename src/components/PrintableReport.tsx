@@ -244,6 +244,7 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
               <thead>
                 <tr className="bg-gray-100">
                   <th className="border border-gray-300 px-2 py-1 text-left">No. Pohon</th>
+                  <th className="border border-gray-300 px-2 py-1 text-left">Tgl Periksa</th>
                   <th className="border border-gray-300 px-2 py-1 text-left">Status</th>
                   <th className="border border-gray-300 px-2 py-1 text-left">Gejala / Diagnosa</th>
                   <th className="border border-gray-300 px-2 py-1 text-left">Tindakan & Catatan</th>
@@ -254,6 +255,9 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
                   <tr key={p.id}>
                     <td className="border border-gray-300 px-2 py-1 font-mono-tabular font-bold">
                       #{p.id}
+                    </td>
+                    <td className="border border-gray-300 px-2 py-1 font-mono-tabular whitespace-nowrap">
+                      {p.inspectionDate || new Date(p.updatedAt).toLocaleDateString('id-ID')}
                     </td>
                     <td className="border border-gray-300 px-2 py-1">
                       {PLANT_STATUS_META[p.status].short} (

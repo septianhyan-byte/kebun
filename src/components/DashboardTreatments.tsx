@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Brush,
+  Calendar,
   CalendarClock,
   Check,
   Copy,
@@ -23,6 +24,12 @@ import {
   TreatmentStatus,
   TreatmentType,
 } from '../types';
+import {
+  localDateTimeInputToIso,
+  matchesLocalDate,
+  toLocalDateInputValue,
+  toLocalDateTimeInputValue,
+} from '../utils/dateUtils';
 
 interface DashboardTreatmentsProps {
   gh: GreenhouseData;
@@ -36,6 +43,7 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
   const [typeFilter, setTypeFilter] = useState<'all' | TreatmentType>('all');
   const [sprayFilter, setSprayFilter] = useState<'all' | SprayCategory>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | TreatmentStatus>('all');
+  const [dateFilter, setDateFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
@@ -43,6 +51,7 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
   useEffect(() => {
     setSelectedIds([]);
     setConfirmClearAll(false);
+    setDateFilter('');
     setTargetPlants(`Semua Tanaman (1–${gh.capacity})`);
   }, [gh.id, gh.capacity]);
 
@@ -53,10 +62,10 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
   const [activeIngredient, setActiveIngredient] = useState('');
   const [dosage, setDosage] = useState('');
   const [targetPlants, setTargetPlants] = useState(`Semua Tanaman (1–${gh.capacity})`);
-  const [scheduledAt, setScheduledAt] = useState(() => {
-    const d = new Date(Date.now() + 3600 * 1000);
-    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  });
+  const [scheduledAt, setScheduledAt] = useState(() =>
+    toLocalDateTimeInputValue(new Date(Date.now() + 3600 * 1000))
+  );
+  const [completedAtInput, setCompletedAtInput] = useState(() => toLocalDateTimeInputValue());
   const [formStatus, setFormStatus] = useState<TreatmentStatus>('terjadwal');
   const [operator, setOperator] = useState('Budi Santoso');
   const [notes, setNotes] = useState('');
@@ -96,13 +105,18 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
         if (t.type !== 'penyemprotan' || t.sprayCategory !== sprayFilter) return false;
       }
       if (statusFilter !== 'all' && t.status !== statusFilter) return false;
+      if (dateFilter) {
+        const matchSchedule = matchesLocalDate(t.scheduledAt, dateFilter);
+        const matchComplete = t.completedAt ? matchesLocalDate(t.completedAt, dateFilter) : false;
+        if (!matchSchedule && !matchComplete) return false;
+      }
       if (q) {
         const hay = `${t.medicineName} ${t.activeIngredient} ${t.sprayCategory || ''} ${t.targetPlants} ${t.operator} ${t.notes}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [gh.treatments, typeFilter, sprayFilter, statusFilter, searchQuery]);
+  }, [gh.treatments, typeFilter, sprayFilter, statusFilter, dateFilter, searchQuery]);
 
   const applySuggestion = (s: { name: string; active: string; dosage: string }) => {
     setManualInputMode(false);
@@ -122,7 +136,11 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
     e.preventDefault();
     if (!medicineName.trim()) return;
 
-    const isoDate = scheduledAt ? new Date(scheduledAt).toISOString() : new Date().toISOString();
+    const isoDate = localDateTimeInputToIso(scheduledAt);
+    const isoCompleted =
+      formStatus === 'selesai'
+        ? localDateTimeInputToIso(completedAtInput || scheduledAt)
+        : undefined;
     const record: TreatmentRecord = {
       id: `tr-${Date.now()}`,
       type: formType,
@@ -132,7 +150,7 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
       dosage: dosage.trim() || 'Sesuai anjuran label',
       targetPlants: targetPlants.trim() || `Semua Tanaman (1–${gh.capacity})`,
       scheduledAt: isoDate,
-      completedAt: formStatus === 'selesai' ? new Date().toISOString() : undefined,
+      completedAt: isoCompleted,
       status: formStatus,
       operator: operator.trim() || 'Operator',
       notes: notes.trim(),
@@ -140,7 +158,9 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
 
     onUpdateGh((prev) => ({
       ...prev,
-      treatments: [record, ...prev.treatments],
+      treatments: [record, ...prev.treatments].sort((a, b) =>
+        String(b.scheduledAt).localeCompare(String(a.scheduledAt))
+      ),
     }));
 
     setMedicineName('');
@@ -516,7 +536,28 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="sm:col-span-2">
-                <label className="block text-xs font-medium mb-1">Tanggal & Jam</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="inline-flex items-center gap-1 text-xs font-medium">
+                    <Calendar className="h-3.5 w-3.5" style={{ color: 'var(--app-accent)' }} />
+                    <span>Tanggal & Jam Pemeriksaan / Jadwal</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nowStr = toLocalDateTimeInputValue();
+                      setScheduledAt(nowStr);
+                      setCompletedAtInput(nowStr);
+                    }}
+                    className="rounded border px-2 py-0.5 text-[11px] font-medium cursor-pointer"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-surface)',
+                      color: 'var(--app-accent)',
+                    }}
+                  >
+                    Sekarang
+                  </button>
+                </div>
                 <input
                   type="datetime-local"
                   value={scheduledAt}
@@ -533,7 +574,13 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
                 <label className="block text-xs font-medium mb-1">Status</label>
                 <select
                   value={formStatus}
-                  onChange={(e) => setFormStatus(e.target.value as TreatmentStatus)}
+                  onChange={(e) => {
+                    const next = e.target.value as TreatmentStatus;
+                    setFormStatus(next);
+                    if (next === 'selesai' && scheduledAt) {
+                      setCompletedAtInput(scheduledAt);
+                    }
+                  }}
                   className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
                   style={{
                     borderColor: 'var(--app-border)',
@@ -546,6 +593,35 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
                 </select>
               </div>
             </div>
+
+            {formStatus === 'selesai' && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-medium">
+                    Tanggal & Jam Selesai Pemeriksaan
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setCompletedAtInput(toLocalDateTimeInputValue())}
+                    className="text-[11px] underline cursor-pointer"
+                    style={{ color: 'var(--app-accent)' }}
+                  >
+                    Samakan Sekarang
+                  </button>
+                </div>
+                <input
+                  type="datetime-local"
+                  value={completedAtInput}
+                  onChange={(e) => setCompletedAtInput(e.target.value)}
+                  className="w-full rounded-lg border px-3 py-2 text-sm font-mono-tabular focus:outline-none"
+                  style={{
+                    borderColor: 'var(--app-border)',
+                    backgroundColor: 'var(--app-canvas)',
+                    color: 'var(--app-text)',
+                  }}
+                />
+              </div>
+            )}
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
@@ -707,6 +783,65 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
                   </button>
                 ))}
               </div>
+
+              {/* Filter Tanggal Pemeriksaan */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <div className="relative flex items-center">
+                  <Calendar
+                    className="pointer-events-none absolute left-2.5 h-3.5 w-3.5"
+                    style={{ color: 'var(--app-text-muted)' }}
+                  />
+                  <input
+                    type="date"
+                    aria-label="Filter tanggal pemeriksaan perawatan"
+                    value={dateFilter}
+                    onChange={(e) => setDateFilter(e.target.value)}
+                    className="h-8 rounded-lg border pl-8 pr-2 text-xs font-mono-tabular focus:outline-none"
+                    style={{
+                      borderColor: dateFilter ? 'var(--app-accent)' : 'var(--app-border)',
+                      backgroundColor: dateFilter ? 'var(--app-accent-soft)' : 'var(--app-canvas)',
+                      color: 'var(--app-text)',
+                    }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = toLocalDateInputValue();
+                    setDateFilter((prev) => (prev === today ? '' : today));
+                  }}
+                  className="h-8 rounded-lg border px-2.5 text-xs font-medium cursor-pointer whitespace-nowrap"
+                  style={{
+                    borderColor:
+                      dateFilter === toLocalDateInputValue()
+                        ? 'var(--app-accent)'
+                        : 'var(--app-border)',
+                    backgroundColor:
+                      dateFilter === toLocalDateInputValue()
+                        ? 'var(--app-accent-soft)'
+                        : 'transparent',
+                    color:
+                      dateFilter === toLocalDateInputValue()
+                        ? 'var(--app-accent)'
+                        : 'var(--app-text)',
+                  }}
+                >
+                  Hari Ini
+                </button>
+                {dateFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setDateFilter('')}
+                    className="h-8 rounded-lg border px-2 text-xs font-medium cursor-pointer whitespace-nowrap"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      color: 'var(--app-text-muted)',
+                    }}
+                  >
+                    Semua Tgl
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -859,6 +994,20 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
                           >
                             {isDone ? 'Selesai' : 'Terjadwal'}
                           </span>
+                          {isDone && item.completedAt && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="font-mono-tabular text-[11px]">
+                                Selesai{' '}
+                                {new Date(item.completedAt).toLocaleString('id-ID', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            </>
+                          )}
                         </div>
 
                         <div className="text-sm font-semibold">
