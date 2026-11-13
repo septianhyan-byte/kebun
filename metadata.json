@@ -1,0 +1,6 @@
+{
+  "name": "MelonFlow NFT — Kontrol Melon Hidroponik",
+  "description": "Aplikasi kontrol budidaya melon hidroponik sistem NFT: pemantauan PPM & pH air, log perawatan tanaman, serta pemetaan kondisi 1–1000 tanaman per greenhouse.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,515 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Profil akun Google pemilik ruang kerja hidroponik yang digunakan untuk otentikasi lintas perangkat dengan akun yang sama.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 200
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["ownerUid", "email", "displayName", "createdAt", "updatedAt"]
+    },
+    "SeasonMeta": {
+      "title": "SeasonMeta",
+      "description": "Dokumen musim tanam melon hidroponik yang dibagikan secara real-time ke seluruh perangkat dengan Akun Google yang sama.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "activeGhId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "greenhouseOrder": {
+          "type": "array",
+          "description": "Urutan ID greenhouse pada musim tanam (maksimal 50)."
+        },
+        "lastModifiedBy": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "clientUpdatedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "ownerUid", "title", "notes", "activeGhId", "greenhouseOrder", "lastModifiedBy", "createdAt", "updatedAt"]
+    },
+    "GreenhouseMeta": {
+      "title": "GreenhouseMeta",
+      "description": "Konfigurasi greenhouse, fase pertumbuhan, tanggal panen manual, dan status tandon air terkini.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "seasonId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "variety": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "capacity": {
+          "type": "number"
+        },
+        "gulliesCount": {
+          "type": "number"
+        },
+        "reservoirLiters": {
+          "type": "number"
+        },
+        "plantingDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "harvestDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["semai", "vegetatif", "generatif", "pembesaran"]
+        },
+        "ecFactor": {
+          "type": "number"
+        },
+        "currentWater": {
+          "type": "object"
+        },
+        "lastModifiedBy": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "seasonId",
+        "name",
+        "variety",
+        "capacity",
+        "gulliesCount",
+        "reservoirLiters",
+        "plantingDate",
+        "harvestDate",
+        "phase",
+        "ecFactor",
+        "currentWater",
+        "lastModifiedBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "WaterLogItem": {
+      "title": "WaterLogItem",
+      "description": "Riwayat pencatatan PPM awal/akhir, pH awal/akhir, tambah air, nutrisi, KOH/Phosphoric, beserta operator.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "timestamp": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "ppmBefore": {
+          "type": "number"
+        },
+        "ppm": {
+          "type": "number"
+        },
+        "ec": {
+          "type": "number"
+        },
+        "phBefore": {
+          "type": "number"
+        },
+        "ph": {
+          "type": "number"
+        },
+        "tempC": {
+          "type": "number"
+        },
+        "flowLpm": {
+          "type": "number"
+        },
+        "reservoirPct": {
+          "type": "number"
+        },
+        "waterAddedLiters": {
+          "type": "number"
+        },
+        "nutrientAddedLiters": {
+          "type": "number"
+        },
+        "abMixAddedMl": {
+          "type": "number"
+        },
+        "phAdjMl": {
+          "type": "number"
+        },
+        "phAdjType": {
+          "type": "string",
+          "enum": ["none", "up", "down"]
+        },
+        "phChemical": {
+          "type": "string",
+          "enum": ["none", "KOH", "Phosphoric"]
+        },
+        "source": {
+          "type": "string",
+          "enum": ["manual", "dosing"]
+        },
+        "operator": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "timestamp",
+        "ppm",
+        "ec",
+        "ph",
+        "tempC",
+        "flowLpm",
+        "reservoirPct",
+        "abMixAddedMl",
+        "phAdjMl",
+        "phAdjType",
+        "source",
+        "operator",
+        "note",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TreatmentItem": {
+      "title": "TreatmentItem",
+      "description": "Jadwal dan riwayat penyemprotan, pengolesan, atau pengocoran pupuk/insektisida/fungisida.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["penyemprotan", "pengolesan", "pengocoran"]
+        },
+        "sprayCategory": {
+          "type": "string",
+          "enum": ["pupuk", "insektisida", "fungisida", ""]
+        },
+        "medicineName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "activeIngredient": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "dosage": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "targetPlants": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "scheduledAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "completedAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "status": {
+          "type": "string",
+          "enum": ["terjadwal", "selesai"]
+        },
+        "operator": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "type",
+        "medicineName",
+        "activeIngredient",
+        "dosage",
+        "targetPlants",
+        "scheduledAt",
+        "status",
+        "operator",
+        "notes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PlantBlock": {
+      "title": "PlantBlock",
+      "description": "Blok berisi maksimal 100 data kondisi tanaman (agar aman di bawah batas 1MB dokumen Firestore untuk 1–1000+ tanaman).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "blockIndex": {
+          "type": "number"
+        },
+        "startId": {
+          "type": "number"
+        },
+        "endId": {
+          "type": "number"
+        },
+        "plants": {
+          "type": "array",
+          "description": "Daftar objek kondisi tanaman (1 sampai 100 tanaman per blok)."
+        },
+        "lastModifiedBy": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "blockIndex",
+        "startId",
+        "endId",
+        "plants",
+        "lastModifiedBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SupervisionActivity": {
+      "title": "SupervisionActivity",
+      "description": "Jejak aktivitas real-time antar perangkat pada Akun Google yang sama untuk saling mengawasi operasional kebun.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "seasonId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ghId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ghName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "category": {
+          "type": "string",
+          "enum": ["water", "treatment", "plants", "greenhouse", "document"]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "deviceLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "actorEmail": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "seasonId",
+        "ghId",
+        "ghName",
+        "category",
+        "summary",
+        "deviceLabel",
+        "actorEmail",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/profile/{docId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Menyimpan profil privat akun Google terverifikasi pemilik ruang kerja."
+    },
+    "/users/{userId}/seasons/{seasonId}": {
+      "schema": { "$ref": "#/entities/SeasonMeta" },
+      "description": "Metadata dokumen musim tanam yang disinkronkan real-time antar perangkat pada akun Google yang sama."
+    },
+    "/users/{userId}/seasons/{seasonId}/greenhouses/{ghId}": {
+      "schema": { "$ref": "#/entities/GreenhouseMeta" },
+      "description": "Data konfigurasi setiap greenhouse dan pembacaan tandon air terkini."
+    },
+    "/users/{userId}/seasons/{seasonId}/greenhouses/{ghId}/waterLogs/{logId}": {
+      "schema": { "$ref": "#/entities/WaterLogItem" },
+      "description": "Log histori penyesuaian PPM, pH, air baku, nutrisi, KOH, dan Phosphoric."
+    },
+    "/users/{userId}/seasons/{seasonId}/greenhouses/{ghId}/treatments/{treatmentId}": {
+      "schema": { "$ref": "#/entities/TreatmentItem" },
+      "description": "Log jadwal dan penyelesaian penyemprotan, pengolesan, dan pengocoran obat/pupuk."
+    },
+    "/users/{userId}/seasons/{seasonId}/greenhouses/{ghId}/plantBlocks/{blockId}": {
+      "schema": { "$ref": "#/entities/PlantBlock" },
+      "description": "Blok 100 tanaman per dokumen untuk sinkronisasi kondisi tanaman 1–1000+ tanpa melewati batas 1MB."
+    },
+    "/users/{userId}/seasons/{seasonId}/activities/{activityId}": {
+      "schema": { "$ref": "#/entities/SupervisionActivity" },
+      "description": "Feed log pengawasan real-time yang mencatat siapa/perangkat mana yang melakukan perubahan."
+    }
+  }
+}

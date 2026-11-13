@@ -1,0 +1,1094 @@
+import type { User } from 'firebase/auth';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  setDoc,
+  Timestamp,
+  updateDoc,
+  where,
+  writeBatch,
+  type Unsubscribe,
+} from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import type {
+  ActivityCategory,
+  GreenhouseData,
+  PlantCondition,
+  SeasonDocument,
+  SupervisionActivity,
+  TreatmentRecord,
+  WaterLogEntry,
+} from '../types';
+
+const DEVICE_LABEL_KEY = 'melonflow_device_label_v1';
+const BLOCK_SIZE = 100;
+
+export function getSavedDeviceLabel(): string {
+  try {
+    const saved = localStorage.getItem(DEVICE_LABEL_KEY);
+    if (saved && saved.trim()) return saved.trim().slice(0, 120);
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent.toLowerCase() : '';
+    if (/android/.test(ua)) return 'HP Android Kebun';
+    if (/iphone|ipad/.test(ua)) return 'Perangkat iOS Kebun';
+    return 'Perangkat Monitoring';
+  } catch {
+    return 'Perangkat Monitoring';
+  }
+}
+
+export function saveDeviceLabel(label: string): string {
+  const clean = (label.trim() || 'Perangkat Monitoring').slice(0, 120);
+  try {
+    localStorage.setItem(DEVICE_LABEL_KEY, clean);
+  } catch {
+    // ignore storage quota errors
+  }
+  return clean;
+}
+
+export function sanitizeId(raw: string, fallback = 'item'): string {
+  const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128);
+  return cleaned || fallback;
+}
+
+function toIsoString(val: unknown): string {
+  if (val instanceof Timestamp) return val.toDate().toISOString();
+  if (typeof val === 'string' && val) return val;
+  if (val && typeof val === 'object' && 'toDate' in val && typeof (val as { toDate: () => Date }).toDate === 'function') {
+    return (val as { toDate: () => Date }).toDate().toISOString();
+  }
+  return new Date().toISOString();
+}
+
+function cleanWaterLogForCloud(ownerUid: string, log: WaterLogEntry) {
+  const logId = sanitizeId(log.id, `wlog-${Date.now()}`);
+  const payload: Record<string, unknown> = {
+    id: logId,
+    ownerUid,
+    timestamp: String(log.timestamp || new Date().toISOString()).slice(0, 64),
+    ppm: Number(log.ppm) || 0,
+    ec: Number(log.ec) || 0,
+    ph: Number(log.ph) || 0,
+    tempC: Number(log.tempC) || 0,
+    flowLpm: Number(log.flowLpm) || 0,
+    reservoirPct: Number(log.reservoirPct) || 0,
+    abMixAddedMl: Number(log.abMixAddedMl) || 0,
+    phAdjMl: Number(log.phAdjMl) || 0,
+    phAdjType: log.phAdjType === 'up' || log.phAdjType === 'down' ? log.phAdjType : 'none',
+    source: log.source === 'dosing' ? 'dosing' : 'manual',
+    operator: String(log.operator || 'Petugas').slice(0, 120),
+    note: String(log.note || '').slice(0, 500),
+  };
+  if (typeof log.ppmBefore === 'number' && !Number.isNaN(log.ppmBefore)) {
+    payload.ppmBefore = log.ppmBefore;
+  }
+  if (typeof log.phBefore === 'number' && !Number.isNaN(log.phBefore)) {
+    payload.phBefore = log.phBefore;
+  }
+  if (typeof log.waterAddedLiters === 'number' && !Number.isNaN(log.waterAddedLiters)) {
+    payload.waterAddedLiters = log.waterAddedLiters;
+  }
+  if (typeof log.nutrientAddedLiters === 'number' && !Number.isNaN(log.nutrientAddedLiters)) {
+    payload.nutrientAddedLiters = log.nutrientAddedLiters;
+  }
+  if (log.phChemical === 'KOH' || log.phChemical === 'Phosphoric' || log.phChemical === 'none') {
+    payload.phChemical = log.phChemical;
+  }
+  return { logId, payload };
+}
+
+function cleanTreatmentForCloud(ownerUid: string, t: TreatmentRecord) {
+  const treatmentId = sanitizeId(t.id, `tr-${Date.now()}`);
+  const payload: Record<string, unknown> = {
+    id: treatmentId,
+    ownerUid,
+    type:
+      t.type === 'pengolesan' || t.type === 'pengocoran' ? t.type : 'penyemprotan',
+    medicineName: String(t.medicineName || 'Perawatan').slice(0, 160),
+    activeIngredient: String(t.activeIngredient || '').slice(0, 160),
+    dosage: String(t.dosage || '').slice(0, 120),
+    targetPlants: String(t.targetPlants || '').slice(0, 160),
+    scheduledAt: String(t.scheduledAt || new Date().toISOString()).slice(0, 64),
+    status: t.status === 'selesai' ? 'selesai' : 'terjadwal',
+    operator: String(t.operator || 'Petugas').slice(0, 120),
+    notes: String(t.notes || '').slice(0, 500),
+  };
+  if (
+    t.sprayCategory === 'pupuk' ||
+    t.sprayCategory === 'insektisida' ||
+    t.sprayCategory === 'fungisida' ||
+    t.sprayCategory === ''
+  ) {
+    payload.sprayCategory = t.sprayCategory;
+  }
+  if (t.completedAt) {
+    payload.completedAt = String(t.completedAt).slice(0, 64);
+  }
+  return { treatmentId, payload };
+}
+
+function cleanPlantForCloud(p: PlantCondition): PlantCondition {
+  return {
+    id: Number(p.id),
+    status: p.status,
+    fruitingStatus: p.fruitingStatus || (p.fruitCount > 0 ? 'berbuah' : 'tidak_berbuah'),
+    symptom: String(p.symptom || '').slice(0, 160),
+    heightCm: Number(p.heightCm) || 0,
+    fruitCount: Number(p.fruitCount) || 0,
+    estWeightKg: Number(p.estWeightKg) || 0,
+    brix: Number(p.brix) || 0,
+    lastAction: String(p.lastAction || '').slice(0, 160),
+    notes: String(p.notes || '').slice(0, 300),
+    harvestDate: p.harvestDate ? String(p.harvestDate).slice(0, 32) : '',
+    updatedAt: String(p.updatedAt || new Date().toISOString()).slice(0, 64),
+  };
+}
+
+function buildPlantBlocks(plants: PlantCondition[]): Array<{
+  blockId: string;
+  blockIndex: number;
+  startId: number;
+  endId: number;
+  plants: PlantCondition[];
+}> {
+  const sorted = [...plants].sort((a, b) => a.id - b.id);
+  const blocks: Array<{
+    blockId: string;
+    blockIndex: number;
+    startId: number;
+    endId: number;
+    plants: PlantCondition[];
+  }> = [];
+  for (let i = 0; i < sorted.length; i += BLOCK_SIZE) {
+    const slice = sorted.slice(i, i + BLOCK_SIZE).map(cleanPlantForCloud);
+    if (slice.length === 0) continue;
+    const blockIndex = Math.floor(i / BLOCK_SIZE);
+    blocks.push({
+      blockId: `block-${blockIndex}`,
+      blockIndex,
+      startId: slice[0].id,
+      endId: slice[slice.length - 1].id,
+      plants: slice,
+    });
+  }
+  return blocks;
+}
+
+function buildGreenhouseMetaPayload(
+  ownerUid: string,
+  seasonId: string,
+  gh: GreenhouseData,
+  deviceLabel: string
+) {
+  const ghId = sanitizeId(gh.id, `gh-${Date.now()}`);
+  return {
+    ghId,
+    payload: {
+      id: ghId,
+      ownerUid,
+      seasonId,
+      name: String(gh.name || 'GH').slice(0, 80),
+      variety: String(gh.variety || '').slice(0, 100),
+      capacity: Math.min(5000, Math.max(1, Number(gh.capacity) || 1000)),
+      gulliesCount: Number(gh.gulliesCount) || 1,
+      reservoirLiters: Number(gh.reservoirLiters) || 1000,
+      plantingDate: String(gh.plantingDate || '').slice(0, 32),
+      harvestDate: String(gh.harvestDate || '').slice(0, 32),
+      phase: gh.phase,
+      ecFactor: gh.ecFactor === 700 ? 700 : 500,
+      currentWater: {
+        ppm: Number(gh.currentWater.ppm) || 0,
+        ec: Number(gh.currentWater.ec) || 0,
+        ph: Number(gh.currentWater.ph) || 0,
+        tempC: Number(gh.currentWater.tempC) || 0,
+        flowLpm: Number(gh.currentWater.flowLpm) || 0,
+        reservoirPct: Number(gh.currentWater.reservoirPct) || 0,
+        pumpCirculation: Boolean(gh.currentWater.pumpCirculation),
+        pumpNutrientA: Boolean(gh.currentWater.pumpNutrientA),
+        pumpNutrientB: Boolean(gh.currentWater.pumpNutrientB),
+        pumpPhDown: Boolean(gh.currentWater.pumpPhDown),
+        pumpPhUp: Boolean(gh.currentWater.pumpPhUp),
+      },
+      lastModifiedBy: deviceLabel.slice(0, 120),
+    },
+  };
+}
+
+export async function upsertUserProfile(user: User): Promise<void> {
+  const path = `users/${user.uid}/profile/info`;
+  const ref = doc(db, 'users', user.uid, 'profile', 'info');
+  try {
+    const snap = await getDoc(ref);
+    const data = {
+      ownerUid: user.uid,
+      email: String(user.email || '').slice(0, 200),
+      displayName: String(user.displayName || user.email || 'Pengguna Google').slice(0, 120),
+      photoURL: String(user.photoURL || '').slice(0, 500),
+    };
+    if (!snap.exists()) {
+      await setDoc(ref, {
+        ...data,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await updateDoc(ref, {
+        email: data.email,
+        displayName: data.displayName,
+        photoURL: data.photoURL,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function logSupervisionActivity(params: {
+  user: User;
+  seasonId: string;
+  ghId: string;
+  ghName: string;
+  category: ActivityCategory;
+  summary: string;
+  deviceLabel: string;
+}): Promise<void> {
+  const seasonId = sanitizeId(params.seasonId, 'season');
+  const ghId = sanitizeId(params.ghId, 'none');
+  const actId = sanitizeId(`act-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
+  const path = `users/${params.user.uid}/seasons/${seasonId}/activities/${actId}`;
+  try {
+    await setDoc(doc(db, 'users', params.user.uid, 'seasons', seasonId, 'activities', actId), {
+      id: actId,
+      ownerUid: params.user.uid,
+      seasonId,
+      ghId,
+      ghName: String(params.ghName || '-').slice(0, 80),
+      category: params.category,
+      summary: String(params.summary || 'Pembaruan data').slice(0, 300),
+      deviceLabel: String(params.deviceLabel || 'Perangkat').slice(0, 120),
+      actorEmail: String(params.user.email || '').slice(0, 200),
+      createdAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function uploadSeasonToCloud(
+  user: User,
+  season: SeasonDocument,
+  deviceLabel: string
+): Promise<string> {
+  const seasonId = sanitizeId(season.id, `season-${Date.now()}`);
+  const seasonRef = doc(db, 'users', user.uid, 'seasons', seasonId);
+  const seasonPath = `users/${user.uid}/seasons/${seasonId}`;
+
+  try {
+    const existingSnap = await getDoc(seasonRef);
+    const ghOrder = season.greenhouses.slice(0, 50).map((g) => sanitizeId(g.id));
+    const activeGhId = ghOrder.includes(sanitizeId(season.activeGhId))
+      ? sanitizeId(season.activeGhId)
+      : ghOrder[0] || 'gh-1';
+
+    // Batch 1: SeasonMeta + all GreenhouseMeta documents
+    const metaBatch = writeBatch(db);
+    if (!existingSnap.exists()) {
+      metaBatch.set(seasonRef, {
+        id: seasonId,
+        ownerUid: user.uid,
+        title: String(season.title || 'Musim Tanam').slice(0, 160),
+        notes: String(season.notes || '').slice(0, 1000),
+        activeGhId,
+        greenhouseOrder: ghOrder.length > 0 ? ghOrder : ['gh-1'],
+        lastModifiedBy: deviceLabel.slice(0, 120),
+        clientUpdatedAt: new Date().toISOString().slice(0, 64),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      metaBatch.update(seasonRef, {
+        title: String(season.title || 'Musim Tanam').slice(0, 160),
+        notes: String(season.notes || '').slice(0, 1000),
+        activeGhId,
+        greenhouseOrder: ghOrder.length > 0 ? ghOrder : ['gh-1'],
+        lastModifiedBy: deviceLabel.slice(0, 120),
+        clientUpdatedAt: new Date().toISOString().slice(0, 64),
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    for (const gh of season.greenhouses.slice(0, 50)) {
+      const { ghId, payload } = buildGreenhouseMetaPayload(user.uid, seasonId, gh, deviceLabel);
+      const ghRef = doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId);
+      const ghSnap = await getDoc(ghRef);
+      if (!ghSnap.exists()) {
+        metaBatch.set(ghRef, {
+          ...payload,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        metaBatch.update(ghRef, {
+          name: payload.name,
+          variety: payload.variety,
+          capacity: payload.capacity,
+          gulliesCount: payload.gulliesCount,
+          reservoirLiters: payload.reservoirLiters,
+          plantingDate: payload.plantingDate,
+          harvestDate: payload.harvestDate,
+          phase: payload.phase,
+          ecFactor: payload.ecFactor,
+          currentWater: payload.currentWater,
+          lastModifiedBy: payload.lastModifiedBy,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
+    await metaBatch.commit();
+
+    // Batch subsequent writes (max 350 ops per batch) for waterLogs, treatments, plantBlocks
+    const ops: Array<(b: ReturnType<typeof writeBatch>) => void> = [];
+
+    for (const gh of season.greenhouses.slice(0, 50)) {
+      const ghId = sanitizeId(gh.id);
+      for (const log of gh.waterLogs) {
+        const { logId, payload } = cleanWaterLogForCloud(user.uid, log);
+        const ref = doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'waterLogs', logId);
+        ops.push((b) =>
+          b.set(ref, {
+            ...payload,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          })
+        );
+      }
+
+      for (const tr of gh.treatments) {
+        const { treatmentId, payload } = cleanTreatmentForCloud(user.uid, tr);
+        const ref = doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'treatments', treatmentId);
+        ops.push((b) =>
+          b.set(ref, {
+            ...payload,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          })
+        );
+      }
+
+      for (const block of buildPlantBlocks(gh.plants)) {
+        const ref = doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'plantBlocks', block.blockId);
+        ops.push((b) =>
+          b.set(ref, {
+            id: block.blockId,
+            ownerUid: user.uid,
+            blockIndex: block.blockIndex,
+            startId: block.startId,
+            endId: block.endId,
+            plants: block.plants,
+            lastModifiedBy: deviceLabel.slice(0, 120),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          })
+        );
+      }
+    }
+
+    for (let i = 0; i < ops.length; i += 350) {
+      const batch = writeBatch(db);
+      ops.slice(i, i + 350).forEach((apply) => apply(batch));
+      await batch.commit();
+    }
+
+    await logSupervisionActivity({
+      user,
+      seasonId,
+      ghId: activeGhId,
+      ghName: season.greenhouses[0]?.name || 'GH 1',
+      category: 'document',
+      summary: `Menyinkronkan dokumen "${season.title.slice(0, 80)}" ke Cloud`,
+      deviceLabel,
+    });
+
+    return seasonId;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, seasonPath);
+  }
+}
+
+export async function deleteSeasonFromCloud(user: User, seasonIdRaw: string): Promise<void> {
+  const seasonId = sanitizeId(seasonIdRaw);
+  const seasonPath = `users/${user.uid}/seasons/${seasonId}`;
+  try {
+    const ghCol = collection(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses');
+    const ghSnap = await getDocs(query(ghCol, where('ownerUid', '==', user.uid)));
+
+    const deletes: Array<ReturnType<typeof doc>> = [];
+    for (const ghDoc of ghSnap.docs) {
+      const ghId = ghDoc.id;
+      for (const sub of ['waterLogs', 'treatments', 'plantBlocks'] as const) {
+        const subSnap = await getDocs(
+          query(
+            collection(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, sub),
+            where('ownerUid', '==', user.uid)
+          )
+        );
+        subSnap.docs.forEach((d) => deletes.push(d.ref));
+      }
+      deletes.push(ghDoc.ref);
+    }
+
+    const actSnap = await getDocs(
+      query(
+        collection(db, 'users', user.uid, 'seasons', seasonId, 'activities'),
+        where('ownerUid', '==', user.uid)
+      )
+    );
+    actSnap.docs.forEach((d) => deletes.push(d.ref));
+    deletes.push(doc(db, 'users', user.uid, 'seasons', seasonId));
+
+    for (let i = 0; i < deletes.length; i += 350) {
+      const batch = writeBatch(db);
+      deletes.slice(i, i + 350).forEach((ref) => batch.delete(ref));
+      await batch.commit();
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, seasonPath);
+  }
+}
+
+export async function addGreenhouseToCloud(
+  user: User,
+  seasonIdRaw: string,
+  gh: GreenhouseData,
+  nextOrder: string[],
+  deviceLabel: string
+): Promise<void> {
+  const seasonId = sanitizeId(seasonIdRaw);
+  const { ghId, payload } = buildGreenhouseMetaPayload(user.uid, seasonId, gh, deviceLabel);
+  const path = `users/${user.uid}/seasons/${seasonId}/greenhouses/${ghId}`;
+  try {
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'users', user.uid, 'seasons', seasonId), {
+      activeGhId: ghId,
+      greenhouseOrder: nextOrder.slice(0, 50).map((id) => sanitizeId(id)),
+      lastModifiedBy: deviceLabel.slice(0, 120),
+      clientUpdatedAt: new Date().toISOString().slice(0, 64),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId), {
+      ...payload,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    for (const block of buildPlantBlocks(gh.plants)) {
+      batch.set(
+        doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'plantBlocks', block.blockId),
+        {
+          id: block.blockId,
+          ownerUid: user.uid,
+          blockIndex: block.blockIndex,
+          startId: block.startId,
+          endId: block.endId,
+          plants: block.plants,
+          lastModifiedBy: deviceLabel.slice(0, 120),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }
+      );
+    }
+    await batch.commit();
+
+    await logSupervisionActivity({
+      user,
+      seasonId,
+      ghId,
+      ghName: gh.name,
+      category: 'greenhouse',
+      summary: `Menambahkan ${gh.name} (${gh.variety}, ${gh.capacity} tanaman)`,
+      deviceLabel,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function deleteGreenhouseFromCloud(
+  user: User,
+  seasonIdRaw: string,
+  ghIdRaw: string,
+  ghName: string,
+  nextActiveGhId: string,
+  nextOrder: string[],
+  deviceLabel: string
+): Promise<void> {
+  const seasonId = sanitizeId(seasonIdRaw);
+  const ghId = sanitizeId(ghIdRaw);
+  const path = `users/${user.uid}/seasons/${seasonId}/greenhouses/${ghId}`;
+  try {
+    const deletes: Array<ReturnType<typeof doc>> = [];
+    for (const sub of ['waterLogs', 'treatments', 'plantBlocks'] as const) {
+      const subSnap = await getDocs(
+        query(
+          collection(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, sub),
+          where('ownerUid', '==', user.uid)
+        )
+      );
+      subSnap.docs.forEach((d) => deletes.push(d.ref));
+    }
+    deletes.push(doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId));
+
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'users', user.uid, 'seasons', seasonId), {
+      activeGhId: sanitizeId(nextActiveGhId),
+      greenhouseOrder: nextOrder.slice(0, 50).map((id) => sanitizeId(id)),
+      lastModifiedBy: deviceLabel.slice(0, 120),
+      clientUpdatedAt: new Date().toISOString().slice(0, 64),
+      updatedAt: serverTimestamp(),
+    });
+    deletes.slice(0, 350).forEach((ref) => batch.delete(ref));
+    await batch.commit();
+
+    if (deletes.length > 350) {
+      for (let i = 350; i < deletes.length; i += 350) {
+        const b = writeBatch(db);
+        deletes.slice(i, i + 350).forEach((ref) => b.delete(ref));
+        await b.commit();
+      }
+    }
+
+    await logSupervisionActivity({
+      user,
+      seasonId,
+      ghId,
+      ghName,
+      category: 'greenhouse',
+      summary: `Menghapus ${ghName}`,
+      deviceLabel,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function updateActiveGhInCloud(
+  user: User,
+  seasonIdRaw: string,
+  activeGhIdRaw: string,
+  deviceLabel: string
+): Promise<void> {
+  const seasonId = sanitizeId(seasonIdRaw);
+  const activeGhId = sanitizeId(activeGhIdRaw);
+  const path = `users/${user.uid}/seasons/${seasonId}`;
+  try {
+    await updateDoc(doc(db, 'users', user.uid, 'seasons', seasonId), {
+      activeGhId,
+      lastModifiedBy: deviceLabel.slice(0, 120),
+      clientUpdatedAt: new Date().toISOString().slice(0, 64),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function syncGreenhouseDeltaToCloud(params: {
+  user: User;
+  seasonId: string;
+  prevGh: GreenhouseData;
+  nextGh: GreenhouseData;
+  deviceLabel: string;
+}): Promise<void> {
+  const { user, prevGh, nextGh, deviceLabel } = params;
+  const seasonId = sanitizeId(params.seasonId);
+  const ghId = sanitizeId(nextGh.id);
+  const ghPath = `users/${user.uid}/seasons/${seasonId}/greenhouses/${ghId}`;
+  const activitySummaries: Array<{ cat: ActivityCategory; text: string }> = [];
+
+  try {
+    const ghRef = doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId);
+    const { payload } = buildGreenhouseMetaPayload(user.uid, seasonId, nextGh, deviceLabel);
+
+    const waterChanged = JSON.stringify(prevGh.currentWater) !== JSON.stringify(nextGh.currentWater);
+    const harvestChanged = (prevGh.harvestDate || '') !== (nextGh.harvestDate || '');
+    const metaChanged =
+      prevGh.name !== nextGh.name ||
+      prevGh.variety !== nextGh.variety ||
+      prevGh.capacity !== nextGh.capacity ||
+      prevGh.gulliesCount !== nextGh.gulliesCount ||
+      prevGh.reservoirLiters !== nextGh.reservoirLiters ||
+      prevGh.plantingDate !== nextGh.plantingDate ||
+      prevGh.phase !== nextGh.phase ||
+      prevGh.ecFactor !== nextGh.ecFactor;
+
+    if (metaChanged) {
+      await updateDoc(ghRef, {
+        name: payload.name,
+        variety: payload.variety,
+        capacity: payload.capacity,
+        gulliesCount: payload.gulliesCount,
+        reservoirLiters: payload.reservoirLiters,
+        plantingDate: payload.plantingDate,
+        harvestDate: payload.harvestDate,
+        phase: payload.phase,
+        ecFactor: payload.ecFactor,
+        currentWater: payload.currentWater,
+        lastModifiedBy: payload.lastModifiedBy,
+        updatedAt: serverTimestamp(),
+      });
+      activitySummaries.push({
+        cat: 'greenhouse',
+        text: `Memperbarui profil ${nextGh.name} (${nextGh.phase}, ${nextGh.capacity} pohon)`,
+      });
+    } else if (harvestChanged) {
+      await updateDoc(ghRef, {
+        harvestDate: payload.harvestDate,
+        lastModifiedBy: payload.lastModifiedBy,
+        updatedAt: serverTimestamp(),
+      });
+      activitySummaries.push({
+        cat: 'greenhouse',
+        text: nextGh.harvestDate
+          ? `Menetapkan tanggal panen ${nextGh.name}: ${nextGh.harvestDate}`
+          : `Menghapus tanggal panen ${nextGh.name}`,
+      });
+    } else if (waterChanged) {
+      await updateDoc(ghRef, {
+        currentWater: payload.currentWater,
+        lastModifiedBy: payload.lastModifiedBy,
+        updatedAt: serverTimestamp(),
+      });
+      if (prevGh.currentWater.ppm !== nextGh.currentWater.ppm || prevGh.currentWater.ph !== nextGh.currentWater.ph) {
+        activitySummaries.push({
+          cat: 'water',
+          text: `Update tandon ${nextGh.name}: ${nextGh.currentWater.ppm} ppm · pH ${nextGh.currentWater.ph}`,
+        });
+      }
+    }
+
+    // Diff waterLogs
+    const prevLogMap = new Map(prevGh.waterLogs.map((l) => [sanitizeId(l.id), l]));
+    const nextLogMap = new Map(nextGh.waterLogs.map((l) => [sanitizeId(l.id), l]));
+
+    const deletedLogs = [...prevLogMap.keys()].filter((id) => !nextLogMap.has(id));
+    const addedLogs = [...nextLogMap.entries()].filter(([id]) => !prevLogMap.has(id));
+
+    for (const logId of deletedLogs) {
+      await deleteDoc(doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'waterLogs', logId));
+    }
+    for (const [logId, log] of addedLogs) {
+      const { payload: logPayload } = cleanWaterLogForCloud(user.uid, log);
+      await setDoc(doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'waterLogs', logId), {
+        ...logPayload,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    if (addedLogs.length > 0) {
+      const latest = addedLogs[0][1];
+      activitySummaries.push({
+        cat: 'water',
+        text: `Log air ${nextGh.name}: PPM ${latest.ppm}, pH ${latest.ph}${latest.note ? ` (${latest.note.slice(0, 60)})` : ''}`,
+      });
+    } else if (deletedLogs.length > 0) {
+      activitySummaries.push({
+        cat: 'water',
+        text: `Menghapus ${deletedLogs.length} log air di ${nextGh.name}`,
+      });
+    }
+
+    // Diff treatments
+    const prevTrMap = new Map(prevGh.treatments.map((t) => [sanitizeId(t.id), t]));
+    const nextTrMap = new Map(nextGh.treatments.map((t) => [sanitizeId(t.id), t]));
+
+    const deletedTrs = [...prevTrMap.keys()].filter((id) => !nextTrMap.has(id));
+    const addedTrs = [...nextTrMap.entries()].filter(([id]) => !prevTrMap.has(id));
+    const updatedTrs = [...nextTrMap.entries()].filter(([id, t]) => {
+      const prev = prevTrMap.get(id);
+      return prev && JSON.stringify(prev) !== JSON.stringify(t);
+    });
+
+    for (const trId of deletedTrs) {
+      await deleteDoc(doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'treatments', trId));
+    }
+    for (const [trId, tr] of addedTrs) {
+      const { payload: trPayload } = cleanTreatmentForCloud(user.uid, tr);
+      await setDoc(doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'treatments', trId), {
+        ...trPayload,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    for (const [trId, tr] of updatedTrs) {
+      const { payload: trPayload } = cleanTreatmentForCloud(user.uid, tr);
+      const updateFields: Record<string, unknown> = {
+        type: trPayload.type,
+        medicineName: trPayload.medicineName,
+        activeIngredient: trPayload.activeIngredient,
+        dosage: trPayload.dosage,
+        targetPlants: trPayload.targetPlants,
+        scheduledAt: trPayload.scheduledAt,
+        status: trPayload.status,
+        operator: trPayload.operator,
+        notes: trPayload.notes,
+        updatedAt: serverTimestamp(),
+      };
+      if ('sprayCategory' in trPayload) updateFields.sprayCategory = trPayload.sprayCategory;
+      if ('completedAt' in trPayload) updateFields.completedAt = trPayload.completedAt;
+      await updateDoc(
+        doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'treatments', trId),
+        updateFields
+      );
+    }
+
+    if (addedTrs.length > 0) {
+      const t = addedTrs[0][1];
+      activitySummaries.push({
+        cat: 'treatment',
+        text: `Jadwal ${t.type} ${t.medicineName} (${nextGh.name})`,
+      });
+    } else if (updatedTrs.length > 0) {
+      const t = updatedTrs[0][1];
+      activitySummaries.push({
+        cat: 'treatment',
+        text: `Perawatan ${t.medicineName} di ${nextGh.name} → ${t.status}`,
+      });
+    } else if (deletedTrs.length > 0) {
+      activitySummaries.push({
+        cat: 'treatment',
+        text: `Menghapus ${deletedTrs.length} catatan perawatan di ${nextGh.name}`,
+      });
+    }
+
+    // Diff plantBlocks (100 plants per block)
+    const prevBlocks = buildPlantBlocks(prevGh.plants);
+    const nextBlocks = buildPlantBlocks(nextGh.plants);
+    const prevBlockMap = new Map(prevBlocks.map((b) => [b.blockId, b]));
+    const nextBlockMap = new Map(nextBlocks.map((b) => [b.blockId, b]));
+
+    const deletedBlocks = [...prevBlockMap.keys()].filter((id) => !nextBlockMap.has(id));
+    const changedBlocks = nextBlocks.filter((b) => {
+      const old = prevBlockMap.get(b.blockId);
+      return !old || JSON.stringify(old.plants) !== JSON.stringify(b.plants);
+    });
+
+    if (deletedBlocks.length > 0 || changedBlocks.length > 0) {
+      const batch = writeBatch(db);
+      for (const blockId of deletedBlocks) {
+        batch.delete(
+          doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'plantBlocks', blockId)
+        );
+      }
+      for (const block of changedBlocks) {
+        const ref = doc(
+          db,
+          'users',
+          user.uid,
+          'seasons',
+          seasonId,
+          'greenhouses',
+          ghId,
+          'plantBlocks',
+          block.blockId
+        );
+        const existed = prevBlockMap.has(block.blockId);
+        if (existed) {
+          batch.update(ref, {
+            startId: block.startId,
+            endId: block.endId,
+            plants: block.plants,
+            lastModifiedBy: deviceLabel.slice(0, 120),
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          batch.set(ref, {
+            id: block.blockId,
+            ownerUid: user.uid,
+            blockIndex: block.blockIndex,
+            startId: block.startId,
+            endId: block.endId,
+            plants: block.plants,
+            lastModifiedBy: deviceLabel.slice(0, 120),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+      await batch.commit();
+
+      // Count how many plants changed
+      const prevPlantById = new Map(prevGh.plants.map((p) => [p.id, p]));
+      let changedCount = 0;
+      let sampleId = 0;
+      for (const p of nextGh.plants) {
+        const oldP = prevPlantById.get(p.id);
+        if (!oldP || JSON.stringify(oldP) !== JSON.stringify(p)) {
+          changedCount++;
+          if (sampleId === 0) sampleId = p.id;
+        }
+      }
+      if (changedCount > 0) {
+        activitySummaries.push({
+          cat: 'plants',
+          text:
+            changedCount === 1
+              ? `Memperbarui kondisi Tanaman #${sampleId} di ${nextGh.name}`
+              : `Memperbarui kondisi ${changedCount} tanaman di ${nextGh.name}`,
+        });
+      }
+    }
+
+    for (const item of activitySummaries) {
+      await logSupervisionActivity({
+        user,
+        seasonId,
+        ghId,
+        ghName: nextGh.name,
+        category: item.cat,
+        summary: item.text,
+        deviceLabel,
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, ghPath);
+  }
+}
+
+export interface CloudSeasonMeta {
+  id: string;
+  title: string;
+  notes: string;
+  activeGhId: string;
+  greenhouseOrder: string[];
+  createdAt: string;
+  updatedAt: string;
+  lastModifiedBy: string;
+}
+
+export function subscribeUserSeasons(
+  uid: string,
+  onSeasons: (metas: CloudSeasonMeta[]) => void
+): Unsubscribe {
+  const path = `users/${uid}/seasons`;
+  const q = query(collection(db, 'users', uid, 'seasons'), where('ownerUid', '==', uid));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: CloudSeasonMeta[] = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: String(data.id || d.id),
+          title: String(data.title || 'Musim Tanam'),
+          notes: String(data.notes || ''),
+          activeGhId: String(data.activeGhId || 'gh-1'),
+          greenhouseOrder: Array.isArray(data.greenhouseOrder)
+            ? (data.greenhouseOrder as string[])
+            : [],
+          createdAt: toIsoString(data.createdAt),
+          updatedAt: toIsoString(data.updatedAt),
+          lastModifiedBy: String(data.lastModifiedBy || ''),
+        };
+      });
+      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      onSeasons(list);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+  );
+}
+
+export function subscribeSeasonRealtime(
+  uid: string,
+  seasonMeta: CloudSeasonMeta,
+  onHydratedSeason: (season: SeasonDocument) => void,
+  onActivities: (activities: SupervisionActivity[]) => void
+): Unsubscribe {
+  const seasonId = seasonMeta.id;
+  const ghColPath = `users/${uid}/seasons/${seasonId}/greenhouses`;
+
+  const ghBaseMap = new Map<string, Omit<GreenhouseData, 'waterLogs' | 'treatments' | 'plants'>>();
+  const waterLogsByGh = new Map<string, WaterLogEntry[]>();
+  const treatmentsByGh = new Map<string, TreatmentRecord[]>();
+  const plantsByGh = new Map<string, PlantCondition[]>();
+  const subUnsubs = new Map<string, Unsubscribe[]>();
+
+  const emit = () => {
+    if (ghBaseMap.size === 0) return;
+    const orderedIds = [
+      ...seasonMeta.greenhouseOrder.filter((id) => ghBaseMap.has(id)),
+      ...[...ghBaseMap.keys()].filter((id) => !seasonMeta.greenhouseOrder.includes(id)),
+    ];
+    const greenhouses: GreenhouseData[] = orderedIds.map((id) => {
+      const base = ghBaseMap.get(id)!;
+      return {
+        ...base,
+        waterLogs: waterLogsByGh.get(id) || [],
+        treatments: treatmentsByGh.get(id) || [],
+        plants: plantsByGh.get(id) || [],
+      };
+    });
+
+    const activeGhId = greenhouses.some((g) => g.id === seasonMeta.activeGhId)
+      ? seasonMeta.activeGhId
+      : greenhouses[0]?.id || 'gh-1';
+
+    onHydratedSeason({
+      id: seasonMeta.id,
+      title: seasonMeta.title,
+      notes: seasonMeta.notes,
+      createdAt: seasonMeta.createdAt,
+      updatedAt: seasonMeta.updatedAt,
+      activeGhId,
+      greenhouses,
+    });
+  };
+
+  const attachGhChildren = (ghId: string) => {
+    if (subUnsubs.has(ghId)) return;
+
+    const wPath = `users/${uid}/seasons/${seasonId}/greenhouses/${ghId}/waterLogs`;
+    const u1 = onSnapshot(
+      query(
+        collection(db, 'users', uid, 'seasons', seasonId, 'greenhouses', ghId, 'waterLogs'),
+        where('ownerUid', '==', uid)
+      ),
+      (snap) => {
+        const logs = snap.docs
+          .map((d) => d.data() as WaterLogEntry)
+          .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+        waterLogsByGh.set(ghId, logs);
+        emit();
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, wPath)
+    );
+
+    const tPath = `users/${uid}/seasons/${seasonId}/greenhouses/${ghId}/treatments`;
+    const u2 = onSnapshot(
+      query(
+        collection(db, 'users', uid, 'seasons', seasonId, 'greenhouses', ghId, 'treatments'),
+        where('ownerUid', '==', uid)
+      ),
+      (snap) => {
+        const items = snap.docs
+          .map((d) => d.data() as TreatmentRecord)
+          .sort((a, b) => String(b.scheduledAt).localeCompare(String(a.scheduledAt)));
+        treatmentsByGh.set(ghId, items);
+        emit();
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, tPath)
+    );
+
+    const pPath = `users/${uid}/seasons/${seasonId}/greenhouses/${ghId}/plantBlocks`;
+    const u3 = onSnapshot(
+      query(
+        collection(db, 'users', uid, 'seasons', seasonId, 'greenhouses', ghId, 'plantBlocks'),
+        where('ownerUid', '==', uid)
+      ),
+      (snap) => {
+        const allPlants: PlantCondition[] = [];
+        const sortedDocs = [...snap.docs].sort(
+          (a, b) => Number(a.data().blockIndex || 0) - Number(b.data().blockIndex || 0)
+        );
+        for (const blockDoc of sortedDocs) {
+          const arr = blockDoc.data().plants;
+          if (Array.isArray(arr)) {
+            allPlants.push(...(arr as PlantCondition[]));
+          }
+        }
+        allPlants.sort((a, b) => a.id - b.id);
+        plantsByGh.set(ghId, allPlants);
+        emit();
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, pPath)
+    );
+
+    subUnsubs.set(ghId, [u1, u2, u3]);
+  };
+
+  const ghUnsub = onSnapshot(
+    query(
+      collection(db, 'users', uid, 'seasons', seasonId, 'greenhouses'),
+      where('ownerUid', '==', uid)
+    ),
+    (snap) => {
+      const seen = new Set<string>();
+      for (const ghDoc of snap.docs) {
+        const d = ghDoc.data();
+        const ghId = String(d.id || ghDoc.id);
+        seen.add(ghId);
+        ghBaseMap.set(ghId, {
+          id: ghId,
+          name: String(d.name || 'GH'),
+          variety: String(d.variety || ''),
+          capacity: Number(d.capacity) || 1000,
+          gulliesCount: Number(d.gulliesCount) || 20,
+          reservoirLiters: Number(d.reservoirLiters) || 2000,
+          plantingDate: String(d.plantingDate || ''),
+          harvestDate: String(d.harvestDate || ''),
+          phase: d.phase,
+          ecFactor: d.ecFactor === 700 ? 700 : 500,
+          currentWater: d.currentWater,
+        });
+        attachGhChildren(ghId);
+      }
+      for (const oldId of [...ghBaseMap.keys()]) {
+        if (!seen.has(oldId)) {
+          ghBaseMap.delete(oldId);
+          waterLogsByGh.delete(oldId);
+          treatmentsByGh.delete(oldId);
+          plantsByGh.delete(oldId);
+          const list = subUnsubs.get(oldId);
+          list?.forEach((u) => u());
+          subUnsubs.delete(oldId);
+        }
+      }
+      emit();
+    },
+    (err) => handleFirestoreError(err, OperationType.LIST, ghColPath)
+  );
+
+  const actPath = `users/${uid}/seasons/${seasonId}/activities`;
+  const actUnsub = onSnapshot(
+    query(
+      collection(db, 'users', uid, 'seasons', seasonId, 'activities'),
+      where('ownerUid', '==', uid)
+    ),
+    (snap) => {
+      const list: SupervisionActivity[] = snap.docs
+        .map((d) => {
+          const data = d.data();
+          return {
+            id: String(data.id || d.id),
+            seasonId: String(data.seasonId || seasonId),
+            ghId: String(data.ghId || ''),
+            ghName: String(data.ghName || '-'),
+            category: (data.category as ActivityCategory) || 'document',
+            summary: String(data.summary || ''),
+            deviceLabel: String(data.deviceLabel || 'Perangkat'),
+            actorEmail: String(data.actorEmail || ''),
+            createdAt: toIsoString(data.createdAt),
+          };
+        })
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 40);
+      onActivities(list);
+    },
+    (err) => handleFirestoreError(err, OperationType.LIST, actPath)
+  );
+
+  return () => {
+    ghUnsub();
+    actUnsub();
+    for (const unsubs of subUnsubs.values()) {
+      unsubs.forEach((u) => u());
+    }
+    subUnsubs.clear();
+  };
+}

@@ -1,0 +1,398 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ====================
+    // Global Helper Primitives
+    // ====================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isNonEmptyString(val, maxLen) {
+      return val is string && val.size() >= 1 && val.size() <= maxLen;
+    }
+
+    function isStringBounded(val, maxLen) {
+      return val is string && val.size() <= maxLen;
+    }
+
+    // ====================
+    // Validation Blueprints
+    // ====================
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['ownerUid', 'email', 'displayName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerUid', 'email', 'displayName', 'photoURL', 'createdAt', 'updatedAt'])
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && isStringBounded(data.email, 200)
+        && isStringBounded(data.displayName, 120)
+        && (!('photoURL' in data) || isStringBounded(data.photoURL, 500))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSeasonMeta(data) {
+      return data.keys().hasAll(['id', 'ownerUid', 'title', 'notes', 'activeGhId', 'greenhouseOrder', 'lastModifiedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'title', 'notes', 'activeGhId', 'greenhouseOrder', 'lastModifiedBy', 'clientUpdatedAt', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && isValidId(data.activeGhId)
+        && isNonEmptyString(data.title, 160)
+        && isStringBounded(data.notes, 1000)
+        && isStringBounded(data.lastModifiedBy, 120)
+        && (!('clientUpdatedAt' in data) || isStringBounded(data.clientUpdatedAt, 64))
+        && data.greenhouseOrder is list
+        && data.greenhouseOrder.size() >= 1
+        && data.greenhouseOrder.size() <= 50
+        && data.greenhouseOrder[0] is string
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCurrentWater(w) {
+      return w is map
+        && w.keys().hasAll(['ppm', 'ec', 'ph', 'tempC', 'flowLpm', 'reservoirPct', 'pumpCirculation', 'pumpNutrientA', 'pumpNutrientB', 'pumpPhDown', 'pumpPhUp'])
+        && w.keys().hasOnly(['ppm', 'ec', 'ph', 'tempC', 'flowLpm', 'reservoirPct', 'pumpCirculation', 'pumpNutrientA', 'pumpNutrientB', 'pumpPhDown', 'pumpPhUp'])
+        && w.ppm is number
+        && w.ec is number
+        && w.ph is number
+        && w.tempC is number
+        && w.flowLpm is number
+        && w.reservoirPct is number
+        && w.pumpCirculation is bool
+        && w.pumpNutrientA is bool
+        && w.pumpNutrientB is bool
+        && w.pumpPhDown is bool
+        && w.pumpPhUp is bool;
+    }
+
+    function isValidGreenhouseMeta(data, seasonId) {
+      return data.keys().hasAll(['id', 'ownerUid', 'seasonId', 'name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'currentWater', 'lastModifiedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'seasonId', 'name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'currentWater', 'lastModifiedBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && data.seasonId == seasonId
+        && isNonEmptyString(data.name, 80)
+        && isStringBounded(data.variety, 100)
+        && data.capacity is number
+        && data.capacity >= 1
+        && data.capacity <= 5000
+        && data.gulliesCount is number
+        && data.reservoirLiters is number
+        && isStringBounded(data.plantingDate, 32)
+        && isStringBounded(data.harvestDate, 32)
+        && data.phase in ['semai', 'vegetatif', 'generatif', 'pembesaran']
+        && data.ecFactor in [500, 700]
+        && isValidCurrentWater(data.currentWater)
+        && isStringBounded(data.lastModifiedBy, 120)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWaterLogItem(data) {
+      return data.keys().hasAll(['id', 'ownerUid', 'timestamp', 'ppm', 'ec', 'ph', 'tempC', 'flowLpm', 'reservoirPct', 'abMixAddedMl', 'phAdjMl', 'phAdjType', 'source', 'operator', 'note', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'timestamp', 'ppmBefore', 'ppm', 'ec', 'phBefore', 'ph', 'tempC', 'flowLpm', 'reservoirPct', 'waterAddedLiters', 'nutrientAddedLiters', 'abMixAddedMl', 'phAdjMl', 'phAdjType', 'phChemical', 'source', 'operator', 'note', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && isStringBounded(data.timestamp, 64)
+        && isStringBounded(data.operator, 120)
+        && isStringBounded(data.note, 500)
+        && data.ppm is number
+        && data.ec is number
+        && data.ph is number
+        && data.tempC is number
+        && data.flowLpm is number
+        && data.reservoirPct is number
+        && data.abMixAddedMl is number
+        && data.phAdjMl is number
+        && (!('ppmBefore' in data) || data.ppmBefore is number)
+        && (!('phBefore' in data) || data.phBefore is number)
+        && (!('waterAddedLiters' in data) || data.waterAddedLiters is number)
+        && (!('nutrientAddedLiters' in data) || data.nutrientAddedLiters is number)
+        && data.phAdjType in ['none', 'up', 'down']
+        && (!('phChemical' in data) || data.phChemical in ['none', 'KOH', 'Phosphoric'])
+        && data.source in ['manual', 'dosing']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTreatmentItem(data) {
+      return data.keys().hasAll(['id', 'ownerUid', 'type', 'medicineName', 'activeIngredient', 'dosage', 'targetPlants', 'scheduledAt', 'status', 'operator', 'notes', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'type', 'sprayCategory', 'medicineName', 'activeIngredient', 'dosage', 'targetPlants', 'scheduledAt', 'completedAt', 'status', 'operator', 'notes', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && data.type in ['penyemprotan', 'pengolesan', 'pengocoran']
+        && (!('sprayCategory' in data) || data.sprayCategory in ['pupuk', 'insektisida', 'fungisida', ''])
+        && isNonEmptyString(data.medicineName, 160)
+        && isStringBounded(data.activeIngredient, 160)
+        && isStringBounded(data.dosage, 120)
+        && isStringBounded(data.targetPlants, 160)
+        && isStringBounded(data.scheduledAt, 64)
+        && (!('completedAt' in data) || isStringBounded(data.completedAt, 64))
+        && data.status in ['terjadwal', 'selesai']
+        && isStringBounded(data.operator, 120)
+        && isStringBounded(data.notes, 500)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPlantBlock(data) {
+      return data.keys().hasAll(['id', 'ownerUid', 'blockIndex', 'startId', 'endId', 'plants', 'lastModifiedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'blockIndex', 'startId', 'endId', 'plants', 'lastModifiedBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && data.blockIndex is number
+        && data.startId is number
+        && data.endId is number
+        && data.plants is list
+        && data.plants.size() >= 1
+        && data.plants.size() <= 100
+        && data.plants[0] is map
+        && isStringBounded(data.lastModifiedBy, 120)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSupervisionActivity(data, seasonId) {
+      return data.keys().hasAll(['id', 'ownerUid', 'seasonId', 'ghId', 'ghName', 'category', 'summary', 'deviceLabel', 'actorEmail', 'createdAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'seasonId', 'ghId', 'ghName', 'category', 'summary', 'deviceLabel', 'actorEmail', 'createdAt'])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && data.seasonId == seasonId
+        && isValidId(data.ghId)
+        && isStringBounded(data.ghName, 80)
+        && data.category in ['water', 'treatment', 'plants', 'greenhouse', 'document']
+        && isNonEmptyString(data.summary, 300)
+        && isNonEmptyString(data.deviceLabel, 120)
+        && isStringBounded(data.actorEmail, 200)
+        && data.createdAt is timestamp;
+    }
+
+    function seasonExistsOrCreated(userId, seasonId) {
+      return exists(/databases/$(database)/documents/users/$(userId)/seasons/$(seasonId))
+        || existsAfter(/databases/$(database)/documents/users/$(userId)/seasons/$(seasonId));
+    }
+
+    function greenhouseExistsOrCreated(userId, seasonId, ghId) {
+      return exists(/databases/$(database)/documents/users/$(userId)/seasons/$(seasonId)/greenhouses/$(ghId))
+        || existsAfter(/databases/$(database)/documents/users/$(userId)/seasons/$(seasonId)/greenhouses/$(ghId));
+    }
+
+    // ====================
+    // User Profile (PII isolated to owner)
+    // ====================
+    match /users/{userId}/profile/{docId} {
+      allow get: if isOwner(userId) && isValidId(docId) && existing().ownerUid == request.auth.uid;
+      allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+      allow create: if isOwner(userId)
+        && isValidId(docId)
+        && isValidUserProfile(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(docId)
+        && isValidUserProfile(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'photoURL', 'updatedAt']);
+      allow delete: if isOwner(userId) && isValidId(docId) && existing().ownerUid == request.auth.uid;
+    }
+
+    // ====================
+    // Seasons Workspace (Shared across devices signed into the same Google account)
+    // ====================
+    match /users/{userId}/seasons/{seasonId} {
+      allow get: if isOwner(userId) && isValidId(seasonId) && existing().ownerUid == request.auth.uid;
+      allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+      allow create: if isOwner(userId)
+        && isValidId(seasonId)
+        && isValidSeasonMeta(incoming())
+        && incoming().id == seasonId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(seasonId)
+        && isValidSeasonMeta(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['activeGhId', 'lastModifiedBy', 'clientUpdatedAt', 'updatedAt'])
+          || incoming().diff(existing()).affectedKeys().hasOnly(['title', 'notes', 'activeGhId', 'greenhouseOrder', 'lastModifiedBy', 'clientUpdatedAt', 'updatedAt'])
+        );
+      allow delete: if isOwner(userId) && isValidId(seasonId) && existing().ownerUid == request.auth.uid;
+
+      // ====================
+      // Greenhouses Subcollection
+      // ====================
+      match /greenhouses/{ghId} {
+        allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && existing().ownerUid == request.auth.uid;
+        allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(seasonId)
+          && isValidId(ghId)
+          && isValidGreenhouseMeta(incoming(), seasonId)
+          && incoming().id == ghId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && seasonExistsOrCreated(userId, seasonId);
+        allow update: if isOwner(userId)
+          && isValidId(seasonId)
+          && isValidId(ghId)
+          && isValidGreenhouseMeta(incoming(), seasonId)
+          && existing().ownerUid == request.auth.uid
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().id == existing().id
+          && incoming().seasonId == existing().seasonId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['currentWater', 'lastModifiedBy', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['harvestDate', 'lastModifiedBy', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'currentWater', 'lastModifiedBy', 'updatedAt'])
+          );
+        allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && existing().ownerUid == request.auth.uid;
+
+        // ====================
+        // Water Logs Subcollection
+        // ====================
+        match /waterLogs/{logId} {
+          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(logId) && existing().ownerUid == request.auth.uid;
+          allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+          allow create: if isOwner(userId)
+            && isValidId(seasonId)
+            && isValidId(ghId)
+            && isValidId(logId)
+            && isValidWaterLogItem(incoming())
+            && incoming().id == logId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && greenhouseExistsOrCreated(userId, seasonId, ghId);
+          allow update: if isOwner(userId)
+            && isValidId(seasonId)
+            && isValidId(ghId)
+            && isValidId(logId)
+            && isValidWaterLogItem(incoming())
+            && existing().ownerUid == request.auth.uid
+            && incoming().ownerUid == existing().ownerUid
+            && incoming().id == existing().id
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly(['note', 'operator', 'updatedAt']);
+          allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(logId) && existing().ownerUid == request.auth.uid;
+        }
+
+        // ====================
+        // Treatments Subcollection
+        // ====================
+        match /treatments/{treatmentId} {
+          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(treatmentId) && existing().ownerUid == request.auth.uid;
+          allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+          allow create: if isOwner(userId)
+            && isValidId(seasonId)
+            && isValidId(ghId)
+            && isValidId(treatmentId)
+            && isValidTreatmentItem(incoming())
+            && incoming().id == treatmentId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && greenhouseExistsOrCreated(userId, seasonId, ghId);
+          allow update: if isOwner(userId)
+            && isValidId(seasonId)
+            && isValidId(ghId)
+            && isValidId(treatmentId)
+            && isValidTreatmentItem(incoming())
+            && existing().ownerUid == request.auth.uid
+            && incoming().ownerUid == existing().ownerUid
+            && incoming().id == existing().id
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && (
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'completedAt', 'updatedAt'])
+              || incoming().diff(existing()).affectedKeys().hasOnly(['type', 'sprayCategory', 'medicineName', 'activeIngredient', 'dosage', 'targetPlants', 'scheduledAt', 'completedAt', 'status', 'operator', 'notes', 'updatedAt'])
+            );
+          allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(treatmentId) && existing().ownerUid == request.auth.uid;
+        }
+
+        // ====================
+        // Plant Blocks Subcollection (100 plants per block)
+        // ====================
+        match /plantBlocks/{blockId} {
+          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(blockId) && existing().ownerUid == request.auth.uid;
+          allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+          allow create: if isOwner(userId)
+            && isValidId(seasonId)
+            && isValidId(ghId)
+            && isValidId(blockId)
+            && isValidPlantBlock(incoming())
+            && incoming().id == blockId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && greenhouseExistsOrCreated(userId, seasonId, ghId);
+          allow update: if isOwner(userId)
+            && isValidId(seasonId)
+            && isValidId(ghId)
+            && isValidId(blockId)
+            && isValidPlantBlock(incoming())
+            && existing().ownerUid == request.auth.uid
+            && incoming().ownerUid == existing().ownerUid
+            && incoming().id == existing().id
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly(['startId', 'endId', 'plants', 'lastModifiedBy', 'updatedAt']);
+          allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(blockId) && existing().ownerUid == request.auth.uid;
+        }
+      }
+
+      // ====================
+      // Supervision Activities (Append-Only Audit Feed)
+      // ====================
+      match /activities/{activityId} {
+        allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(activityId) && existing().ownerUid == request.auth.uid;
+        allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(seasonId)
+          && isValidId(activityId)
+          && isValidSupervisionActivity(incoming(), seasonId)
+          && incoming().id == activityId
+          && incoming().createdAt == request.time
+          && seasonExistsOrCreated(userId, seasonId);
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(activityId) && existing().ownerUid == request.auth.uid;
+      }
+    }
+  }
+}

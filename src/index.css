@@ -1,0 +1,76 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --app-font: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --app-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --app-canvas: #f7f9f7;
+  --app-surface: #ffffff;
+  --app-surface-muted: #eff4ef;
+  --app-border: #dce5dc;
+  --app-text: #132016;
+  --app-text-muted: #526356;
+  --app-accent: #15803d;
+  --app-accent-hover: #166534;
+  --app-accent-fg: #ffffff;
+  --app-accent-soft: rgba(21, 128, 61, 0.1);
+}
+
+body {
+  font-family: var(--app-font);
+  background-color: var(--app-canvas);
+  color: var(--app-text);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-mono-tabular {
+  font-family: var(--app-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Smooth reduced motion respect */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Print / PDF Stylesheet */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #111827 !important;
+    font-size: 11px !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .print-break-inside-avoid {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-page-break {
+    break-before: page;
+    page-break-before: always;
+  }
+}

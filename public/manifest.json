@@ -1,0 +1,37 @@
+{
+  "id": "/",
+  "name": "MelonFlow NFT — Kontrol Melon Hidroponik",
+  "short_name": "MelonFlow",
+  "description": "Aplikasi kontrol budidaya melon hidroponik sistem NFT: PPM & pH air, perawatan obat, serta pemetaan kondisi 1–1000 tanaman.",
+  "lang": "id",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
+  "theme_color": "#15803d",
+  "background_color": "#f7f9f7",
+  "prefer_related_applications": false,
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
