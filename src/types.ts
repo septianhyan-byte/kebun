@@ -110,6 +110,14 @@ export interface PlantCondition {
   updatedAt: string;
 }
 
+export interface WaterTargets {
+  useCustom: boolean;
+  ppmMin: number;
+  ppmMax: number;
+  phMin: number;
+  phMax: number;
+}
+
 export interface GreenhouseData {
   id: string;
   name: string;
@@ -121,6 +129,7 @@ export interface GreenhouseData {
   harvestDate?: string;
   phase: GrowthPhase;
   ecFactor: 500 | 700;
+  waterTargets?: WaterTargets;
   currentWater: WaterState;
   waterLogs: WaterLogEntry[];
   treatments: TreatmentRecord[];

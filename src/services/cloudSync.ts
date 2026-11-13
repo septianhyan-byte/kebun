@@ -24,6 +24,7 @@ import type {
   SupervisionActivity,
   TreatmentRecord,
   WaterLogEntry,
+  WaterTargets,
 } from '../types';
 
 const DEVICE_LABEL_KEY = 'melonflow_device_label_v1';
@@ -181,6 +182,21 @@ function buildPlantBlocks(plants: PlantCondition[]): Array<{
   return blocks;
 }
 
+function cleanWaterTargets(wt?: WaterTargets): WaterTargets | undefined {
+  if (!wt) return undefined;
+  const rawPpmMin = Math.min(5000, Math.max(0, Math.round(Number(wt.ppmMin) || 0)));
+  const rawPpmMax = Math.min(5000, Math.max(0, Math.round(Number(wt.ppmMax) || 0)));
+  const rawPhMin = Number(Math.min(14, Math.max(0, Number(wt.phMin) || 0)).toFixed(2));
+  const rawPhMax = Number(Math.min(14, Math.max(0, Number(wt.phMax) || 0)).toFixed(2));
+  return {
+    useCustom: Boolean(wt.useCustom),
+    ppmMin: Math.min(rawPpmMin, rawPpmMax),
+    ppmMax: Math.max(rawPpmMin, rawPpmMax),
+    phMin: Math.min(rawPhMin, rawPhMax),
+    phMax: Math.max(rawPhMin, rawPhMax),
+  };
+}
+
 function buildGreenhouseMetaPayload(
   ownerUid: string,
   seasonId: string,
@@ -188,37 +204,39 @@ function buildGreenhouseMetaPayload(
   deviceLabel: string
 ) {
   const ghId = sanitizeId(gh.id, `gh-${Date.now()}`);
-  return {
-    ghId,
-    payload: {
-      id: ghId,
-      ownerUid,
-      seasonId,
-      name: String(gh.name || 'GH').slice(0, 80),
-      variety: String(gh.variety || '').slice(0, 100),
-      capacity: Math.min(5000, Math.max(1, Number(gh.capacity) || 1000)),
-      gulliesCount: Number(gh.gulliesCount) || 1,
-      reservoirLiters: Number(gh.reservoirLiters) || 1000,
-      plantingDate: String(gh.plantingDate || '').slice(0, 32),
-      harvestDate: String(gh.harvestDate || '').slice(0, 32),
-      phase: gh.phase,
-      ecFactor: gh.ecFactor === 700 ? 700 : 500,
-      currentWater: {
-        ppm: Number(gh.currentWater.ppm) || 0,
-        ec: Number(gh.currentWater.ec) || 0,
-        ph: Number(gh.currentWater.ph) || 0,
-        tempC: Number(gh.currentWater.tempC) || 0,
-        flowLpm: Number(gh.currentWater.flowLpm) || 0,
-        reservoirPct: Number(gh.currentWater.reservoirPct) || 0,
-        pumpCirculation: Boolean(gh.currentWater.pumpCirculation),
-        pumpNutrientA: Boolean(gh.currentWater.pumpNutrientA),
-        pumpNutrientB: Boolean(gh.currentWater.pumpNutrientB),
-        pumpPhDown: Boolean(gh.currentWater.pumpPhDown),
-        pumpPhUp: Boolean(gh.currentWater.pumpPhUp),
-      },
-      lastModifiedBy: deviceLabel.slice(0, 120),
+  const waterTargets = cleanWaterTargets(gh.waterTargets);
+  const payload: Record<string, unknown> = {
+    id: ghId,
+    ownerUid,
+    seasonId,
+    name: String(gh.name || 'GH').slice(0, 80),
+    variety: String(gh.variety || '').slice(0, 100),
+    capacity: Math.min(5000, Math.max(1, Number(gh.capacity) || 1000)),
+    gulliesCount: Number(gh.gulliesCount) || 1,
+    reservoirLiters: Number(gh.reservoirLiters) || 1000,
+    plantingDate: String(gh.plantingDate || '').slice(0, 32),
+    harvestDate: String(gh.harvestDate || '').slice(0, 32),
+    phase: gh.phase,
+    ecFactor: gh.ecFactor === 700 ? 700 : 500,
+    currentWater: {
+      ppm: Number(gh.currentWater.ppm) || 0,
+      ec: Number(gh.currentWater.ec) || 0,
+      ph: Number(gh.currentWater.ph) || 0,
+      tempC: Number(gh.currentWater.tempC) || 0,
+      flowLpm: Number(gh.currentWater.flowLpm) || 0,
+      reservoirPct: Number(gh.currentWater.reservoirPct) || 0,
+      pumpCirculation: Boolean(gh.currentWater.pumpCirculation),
+      pumpNutrientA: Boolean(gh.currentWater.pumpNutrientA),
+      pumpNutrientB: Boolean(gh.currentWater.pumpNutrientB),
+      pumpPhDown: Boolean(gh.currentWater.pumpPhDown),
+      pumpPhUp: Boolean(gh.currentWater.pumpPhUp),
     },
+    lastModifiedBy: deviceLabel.slice(0, 120),
   };
+  if (waterTargets) {
+    payload.waterTargets = waterTargets;
+  }
+  return { ghId, payload };
 }
 
 export async function upsertUserProfile(user: User): Promise<void> {
@@ -336,7 +354,7 @@ export async function uploadSeasonToCloud(
           updatedAt: serverTimestamp(),
         });
       } else {
-        metaBatch.update(ghRef, {
+        const updateFields: Record<string, unknown> = {
           name: payload.name,
           variety: payload.variety,
           capacity: payload.capacity,
@@ -349,7 +367,11 @@ export async function uploadSeasonToCloud(
           currentWater: payload.currentWater,
           lastModifiedBy: payload.lastModifiedBy,
           updatedAt: serverTimestamp(),
-        });
+        };
+        if (payload.waterTargets) {
+          updateFields.waterTargets = payload.waterTargets;
+        }
+        metaBatch.update(ghRef, updateFields);
       }
     }
     await metaBatch.commit();
@@ -618,6 +640,8 @@ export async function syncGreenhouseDeltaToCloud(params: {
 
     const waterChanged = JSON.stringify(prevGh.currentWater) !== JSON.stringify(nextGh.currentWater);
     const harvestChanged = (prevGh.harvestDate || '') !== (nextGh.harvestDate || '');
+    const targetsChanged =
+      JSON.stringify(prevGh.waterTargets || null) !== JSON.stringify(nextGh.waterTargets || null);
     const metaChanged =
       prevGh.name !== nextGh.name ||
       prevGh.variety !== nextGh.variety ||
@@ -629,7 +653,7 @@ export async function syncGreenhouseDeltaToCloud(params: {
       prevGh.ecFactor !== nextGh.ecFactor;
 
     if (metaChanged) {
-      await updateDoc(ghRef, {
+      const updateFields: Record<string, unknown> = {
         name: payload.name,
         variety: payload.variety,
         capacity: payload.capacity,
@@ -642,10 +666,27 @@ export async function syncGreenhouseDeltaToCloud(params: {
         currentWater: payload.currentWater,
         lastModifiedBy: payload.lastModifiedBy,
         updatedAt: serverTimestamp(),
-      });
+      };
+      if (payload.waterTargets) {
+        updateFields.waterTargets = payload.waterTargets;
+      }
+      await updateDoc(ghRef, updateFields);
       activitySummaries.push({
         cat: 'greenhouse',
         text: `Memperbarui profil ${nextGh.name} (${nextGh.phase}, ${nextGh.capacity} pohon)`,
+      });
+    } else if (targetsChanged && payload.waterTargets) {
+      await updateDoc(ghRef, {
+        waterTargets: payload.waterTargets,
+        lastModifiedBy: payload.lastModifiedBy,
+        updatedAt: serverTimestamp(),
+      });
+      const wt = nextGh.waterTargets!;
+      activitySummaries.push({
+        cat: 'water',
+        text: wt.useCustom
+          ? `Mengatur batas kustom ${nextGh.name}: ${wt.ppmMin}–${wt.ppmMax} ppm, pH ${wt.phMin.toFixed(1)}–${wt.phMax.toFixed(1)}`
+          : `Mengembalikan batas PPM & pH ${nextGh.name} ke standar fase`,
       });
     } else if (harvestChanged) {
       await updateDoc(ghRef, {
@@ -1035,6 +1076,16 @@ export function subscribeSeasonRealtime(
           harvestDate: String(d.harvestDate || ''),
           phase: d.phase,
           ecFactor: d.ecFactor === 700 ? 700 : 500,
+          waterTargets:
+            d.waterTargets && typeof d.waterTargets === 'object'
+              ? {
+                  useCustom: Boolean(d.waterTargets.useCustom),
+                  ppmMin: Number(d.waterTargets.ppmMin) || 500,
+                  ppmMax: Number(d.waterTargets.ppmMax) || 1000,
+                  phMin: Number(d.waterTargets.phMin) || 6.5,
+                  phMax: Number(d.waterTargets.phMax) || 7.0,
+                }
+              : undefined,
           currentWater: d.currentWater,
         });
         attachGhChildren(ghId);

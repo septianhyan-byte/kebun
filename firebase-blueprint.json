@@ -139,6 +139,10 @@
         "ecFactor": {
           "type": "number"
         },
+        "waterTargets": {
+          "type": "object",
+          "description": "Batas target PPM dan pH kustom yang dapat diisi manual oleh pemeriksa."
+        },
         "currentWater": {
           "type": "object"
         },

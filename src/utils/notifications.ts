@@ -50,22 +50,29 @@ export function evaluateGreenhouseAlerts(
   const alerts: AppAlert[] = [];
   const now = new Date().toISOString();
 
-  if (gh.currentWater.ppm < notif.ppmMin || gh.currentWater.ppm > notif.ppmMax) {
+  const useCustom = Boolean(gh.waterTargets?.useCustom);
+  const ppmMin = useCustom ? gh.waterTargets!.ppmMin : notif.ppmMin;
+  const ppmMax = useCustom ? gh.waterTargets!.ppmMax : notif.ppmMax;
+  const phMin = useCustom ? gh.waterTargets!.phMin : notif.phMin;
+  const phMax = useCustom ? gh.waterTargets!.phMax : notif.phMax;
+  const targetLabel = useCustom ? 'Target pemeriksa' : 'Target notifikasi';
+
+  if (gh.currentWater.ppm < ppmMin || gh.currentWater.ppm > ppmMax) {
     alerts.push({
       id: `alert-ppm-${gh.id}`,
       level: 'critical',
       title: `${gh.name}: PPM di Luar Batas (${gh.currentWater.ppm} ppm)`,
-      message: `Target notifikasi: ${notif.ppmMin}–${notif.ppmMax} ppm. Sesuaikan dosing Nutrisi AB atau air baku.`,
+      message: `${targetLabel}: ${ppmMin}–${ppmMax} ppm. Sesuaikan dosing Nutrisi AB atau air baku.`,
       timestamp: now,
     });
   }
 
-  if (gh.currentWater.ph < notif.phMin || gh.currentWater.ph > notif.phMax) {
+  if (gh.currentWater.ph < phMin || gh.currentWater.ph > phMax) {
     alerts.push({
       id: `alert-ph-${gh.id}`,
       level: 'critical',
       title: `${gh.name}: pH Air di Luar Batas (${gh.currentWater.ph.toFixed(2)})`,
-      message: `Target notifikasi: pH ${notif.phMin.toFixed(1)}–${notif.phMax.toFixed(1)}. Lakukan dosing pH Up/Down.`,
+      message: `${targetLabel}: pH ${phMin.toFixed(1)}–${phMax.toFixed(1)}. Lakukan dosing pH Up/Down.`,
       timestamp: now,
     });
   }

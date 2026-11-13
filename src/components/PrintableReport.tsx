@@ -21,6 +21,11 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
   previewMode = false,
 }) => {
   const phaseSpec = GROWTH_PHASE_SPECS[activeGh.phase];
+  const useCustomTargets = Boolean(activeGh.waterTargets?.useCustom);
+  const targetPpmMin = useCustomTargets ? (activeGh.waterTargets?.ppmMin ?? phaseSpec.ppmMin) : phaseSpec.ppmMin;
+  const targetPpmMax = useCustomTargets ? (activeGh.waterTargets?.ppmMax ?? phaseSpec.ppmMax) : phaseSpec.ppmMax;
+  const targetPhMin = useCustomTargets ? (activeGh.waterTargets?.phMin ?? phaseSpec.phMin) : phaseSpec.phMin;
+  const targetPhMax = useCustomTargets ? (activeGh.waterTargets?.phMax ?? phaseSpec.phMax) : phaseSpec.phMax;
   const counts = {
     sehat: activeGh.plants.filter((p) => p.status === 'sehat').length,
     perhatian: activeGh.plants.filter((p) => p.status === 'perhatian').length,
@@ -78,11 +83,17 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
               <div className="font-bold font-mono-tabular text-sm">
                 {activeGh.currentWater.ppm} ppm ({activeGh.currentWater.ec.toFixed(2)} mS)
               </div>
+              <div className="text-[10px] text-gray-500 font-mono-tabular">
+                Target: {targetPpmMin}–{targetPpmMax} ppm{useCustomTargets ? ' (Pemeriksa)' : ''}
+              </div>
             </div>
             <div>
               <div className="text-gray-500">pH Larutan</div>
               <div className="font-bold font-mono-tabular text-sm">
                 {activeGh.currentWater.ph.toFixed(2)}
+              </div>
+              <div className="text-[10px] text-gray-500 font-mono-tabular">
+                Target: {targetPhMin.toFixed(1)}–{targetPhMax.toFixed(1)}{useCustomTargets ? ' (Pemeriksa)' : ''}
               </div>
             </div>
             <div>

@@ -3,12 +3,15 @@ import {
   AlertTriangle,
   ArrowRight,
   Calendar,
+  Check,
   CheckCircle2,
   Download,
   Droplets,
   Gauge,
   Plus,
   Power,
+  RotateCcw,
+  SlidersHorizontal,
   Thermometer,
   Trash2,
   Waves,
@@ -37,6 +40,27 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
   const { currentWater } = gh;
   const latestLog = gh.waterLogs[0];
 
+  const useCustomTargets = Boolean(gh.waterTargets?.useCustom);
+  const effectivePpmMin = useCustomTargets
+    ? Math.min(gh.waterTargets?.ppmMin ?? phaseSpec.ppmMin, gh.waterTargets?.ppmMax ?? phaseSpec.ppmMax)
+    : phaseSpec.ppmMin;
+  const effectivePpmMax = useCustomTargets
+    ? Math.max(gh.waterTargets?.ppmMin ?? phaseSpec.ppmMin, gh.waterTargets?.ppmMax ?? phaseSpec.ppmMax)
+    : phaseSpec.ppmMax;
+  const effectivePhMin = useCustomTargets
+    ? Math.min(gh.waterTargets?.phMin ?? phaseSpec.phMin, gh.waterTargets?.phMax ?? phaseSpec.phMax)
+    : phaseSpec.phMin;
+  const effectivePhMax = useCustomTargets
+    ? Math.max(gh.waterTargets?.phMin ?? phaseSpec.phMin, gh.waterTargets?.phMax ?? phaseSpec.phMax)
+    : phaseSpec.phMax;
+
+  // Custom inspector PPM & pH limit editor state
+  const [customPpmMinInput, setCustomPpmMinInput] = useState(String(effectivePpmMin));
+  const [customPpmMaxInput, setCustomPpmMaxInput] = useState(String(effectivePpmMax));
+  const [customPhMinInput, setCustomPhMinInput] = useState(effectivePhMin.toFixed(1));
+  const [customPhMaxInput, setCustomPhMaxInput] = useState(effectivePhMax.toFixed(1));
+  const [targetsSavedFeedback, setTargetsSavedFeedback] = useState(false);
+
   // Manual form state: Initial & Final PPM / pH + Air + Nutrisi 1-20L + KOH / Phosphoric
   const [ppmBefore, setPpmBefore] = useState(String(currentWater.ppm));
   const [ppmAfter, setPpmAfter] = useState(String(currentWater.ppm));
@@ -60,6 +84,14 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
   const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
   const [confirmClearAllLogs, setConfirmClearAllLogs] = useState(false);
 
+  // Sync custom limit inputs when GH, phase, or synced waterTargets change
+  useEffect(() => {
+    setCustomPpmMinInput(String(effectivePpmMin));
+    setCustomPpmMaxInput(String(effectivePpmMax));
+    setCustomPhMinInput(effectivePhMin.toFixed(1));
+    setCustomPhMaxInput(effectivePhMax.toFixed(1));
+  }, [gh.id, effectivePpmMin, effectivePpmMax, effectivePhMin, effectivePhMax]);
+
   // Sync form defaults when switching GH
   useEffect(() => {
     setPpmBefore(String(gh.currentWater.ppm));
@@ -77,6 +109,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     setDateFilter('');
     setSelectedLogIds([]);
     setConfirmClearAllLogs(false);
+    setTargetsSavedFeedback(false);
   }, [gh.id]);
 
   // Estimate PPM/pH after based on manual inputs (user can still overwrite PPM Akhir / pH Akhir freely)
@@ -157,19 +190,87 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
   };
 
   const ppmStatus = useMemo(() => {
-    if (currentWater.ppm < phaseSpec.ppmMin) return { label: 'Rendah (Tambah Nutrisi)', ok: false };
-    if (currentWater.ppm > phaseSpec.ppmMax) return { label: 'Tinggi (Tambah Air)', ok: false };
-    return { label: 'Optimal Sesuai Fase', ok: true };
-  }, [currentWater.ppm, phaseSpec]);
+    if (currentWater.ppm < effectivePpmMin) return { label: 'Rendah (Tambah Nutrisi)', ok: false };
+    if (currentWater.ppm > effectivePpmMax) return { label: 'Tinggi (Tambah Air)', ok: false };
+    return {
+      label: useCustomTargets ? 'Optimal (Batas Pemeriksa)' : 'Optimal Sesuai Fase',
+      ok: true,
+    };
+  }, [currentWater.ppm, effectivePpmMin, effectivePpmMax, useCustomTargets]);
 
   const phStatus = useMemo(() => {
-    if (currentWater.ph < phaseSpec.phMin) return { label: 'Terlalu Asam (Tambah KOH)', ok: false };
-    if (currentWater.ph > phaseSpec.phMax) return { label: 'Terlalu Basa (Tambah Phosphoric)', ok: false };
-    return { label: 'Ideal Penyerapan Akar', ok: true };
-  }, [currentWater.ph, phaseSpec]);
+    if (currentWater.ph < effectivePhMin) return { label: 'Terlalu Asam (Tambah KOH)', ok: false };
+    if (currentWater.ph > effectivePhMax) return { label: 'Terlalu Basa (Tambah Phosphoric)', ok: false };
+    return {
+      label: useCustomTargets ? 'Ideal (Batas Pemeriksa)' : 'Ideal Penyerapan Akar',
+      ok: true,
+    };
+  }, [currentWater.ph, effectivePhMin, effectivePhMax, useCustomTargets]);
 
   const handlePhaseChange = (phase: GrowthPhase) => {
     onUpdateGh((prev) => ({ ...prev, phase }));
+  };
+
+  const handleSetTargetMode = (custom: boolean) => {
+    if (!custom) {
+      onUpdateGh((prev) => ({
+        ...prev,
+        waterTargets: {
+          useCustom: false,
+          ppmMin: GROWTH_PHASE_SPECS[prev.phase].ppmMin,
+          ppmMax: GROWTH_PHASE_SPECS[prev.phase].ppmMax,
+          phMin: GROWTH_PHASE_SPECS[prev.phase].phMin,
+          phMax: GROWTH_PHASE_SPECS[prev.phase].phMax,
+        },
+      }));
+      setTargetsSavedFeedback(false);
+    } else {
+      const pMin = Math.min(5000, Math.max(0, Math.round(Number(customPpmMinInput) || phaseSpec.ppmMin)));
+      const pMax = Math.min(5000, Math.max(0, Math.round(Number(customPpmMaxInput) || phaseSpec.ppmMax)));
+      const hMin = Number(Math.min(14, Math.max(0, Number(customPhMinInput) || phaseSpec.phMin)).toFixed(2));
+      const hMax = Number(Math.min(14, Math.max(0, Number(customPhMaxInput) || phaseSpec.phMax)).toFixed(2));
+      onUpdateGh((prev) => ({
+        ...prev,
+        waterTargets: {
+          useCustom: true,
+          ppmMin: Math.min(pMin, pMax),
+          ppmMax: Math.max(pMin, pMax),
+          phMin: Math.min(hMin, hMax),
+          phMax: Math.max(hMin, hMax),
+        },
+      }));
+    }
+  };
+
+  const handleSaveCustomTargets = (e: React.FormEvent) => {
+    e.preventDefault();
+    const rawPpmMin = Math.min(5000, Math.max(0, Math.round(Number(customPpmMinInput) || 0)));
+    const rawPpmMax = Math.min(5000, Math.max(0, Math.round(Number(customPpmMaxInput) || 0)));
+    const rawPhMin = Number(Math.min(14, Math.max(0, Number(customPhMinInput) || 0)).toFixed(2));
+    const rawPhMax = Number(Math.min(14, Math.max(0, Number(customPhMaxInput) || 0)).toFixed(2));
+
+    const nextPpmMin = Math.min(rawPpmMin, rawPpmMax);
+    const nextPpmMax = Math.max(rawPpmMin, rawPpmMax);
+    const nextPhMin = Math.min(rawPhMin, rawPhMax);
+    const nextPhMax = Math.max(rawPhMin, rawPhMax);
+
+    setCustomPpmMinInput(String(nextPpmMin));
+    setCustomPpmMaxInput(String(nextPpmMax));
+    setCustomPhMinInput(nextPhMin.toFixed(1));
+    setCustomPhMaxInput(nextPhMax.toFixed(1));
+
+    onUpdateGh((prev) => ({
+      ...prev,
+      waterTargets: {
+        useCustom: true,
+        ppmMin: nextPpmMin,
+        ppmMax: nextPpmMax,
+        phMin: nextPhMin,
+        phMax: nextPhMax,
+      },
+    }));
+    setTargetsSavedFeedback(true);
+    setTimeout(() => setTargetsSavedFeedback(false), 2500);
   };
 
   const handleEcFactorToggle = () => {
@@ -363,9 +464,9 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Phase Selector Strip */}
+      {/* Phase Selector & Custom Inspector PPM / pH Bounds */}
       <section
-        className="rounded-xl border p-4 sm:p-5"
+        className="rounded-xl border p-4 sm:p-5 space-y-4"
         style={{
           backgroundColor: 'var(--app-surface)',
           borderColor: 'var(--app-border)',
@@ -379,11 +480,14 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
             <p className="mt-0.5 text-xs sm:text-sm" style={{ color: 'var(--app-text-muted)' }}>
               {phaseSpec.note} Target PPM{' '}
               <span className="font-mono-tabular font-semibold" style={{ color: 'var(--app-text)' }}>
-                {phaseSpec.ppmMin}–{phaseSpec.ppmMax} ppm
+                {effectivePpmMin}–{effectivePpmMax} ppm
               </span>{' '}
               · Target pH{' '}
               <span className="font-mono-tabular font-semibold" style={{ color: 'var(--app-text)' }}>
-                {phaseSpec.phMin.toFixed(1)}–{phaseSpec.phMax.toFixed(1)}
+                {effectivePhMin.toFixed(1)}–{effectivePhMax.toFixed(1)}
+              </span>{' '}
+              <span className="font-medium" style={{ color: 'var(--app-accent)' }}>
+                ({useCustomTargets ? 'Batas Kustom Pemeriksa' : 'Standar Fase'})
               </span>
             </p>
           </div>
@@ -411,6 +515,194 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
               );
             })}
           </div>
+        </div>
+
+        {/* Batas Target PPM & pH Pemeriksa */}
+        <div
+          className="rounded-lg border p-3.5 space-y-3"
+          style={{
+            borderColor: useCustomTargets ? 'var(--app-accent)' : 'var(--app-border)',
+            backgroundColor: 'var(--app-canvas)',
+          }}
+        >
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 shrink-0" style={{ color: 'var(--app-accent)' }} />
+              <div>
+                <div className="text-xs font-semibold">
+                  Batas Target PPM &amp; pH ({gh.name})
+                </div>
+                <div className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                  Pemeriksa dapat memakai standar fase otomatis atau mengisi batas PPM &amp; pH sendiri.
+                </div>
+              </div>
+            </div>
+
+            <div
+              className="flex items-center gap-1 rounded-lg p-1 self-start sm:self-auto"
+              style={{ backgroundColor: 'var(--app-surface-muted)' }}
+            >
+              <button
+                type="button"
+                onClick={() => handleSetTargetMode(false)}
+                className="rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer"
+                style={{
+                  backgroundColor: !useCustomTargets ? 'var(--app-surface)' : 'transparent',
+                  color: !useCustomTargets ? 'var(--app-accent)' : 'var(--app-text-muted)',
+                  boxShadow: !useCustomTargets ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                }}
+              >
+                Ikuti Standar Fase
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetTargetMode(true)}
+                className="rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer"
+                style={{
+                  backgroundColor: useCustomTargets ? 'var(--app-surface)' : 'transparent',
+                  color: useCustomTargets ? 'var(--app-accent)' : 'var(--app-text-muted)',
+                  boxShadow: useCustomTargets ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                }}
+              >
+                Isi Sendiri (Pemeriksa)
+              </button>
+            </div>
+          </div>
+
+          {useCustomTargets && (
+            <form
+              onSubmit={handleSaveCustomTargets}
+              className="grid grid-cols-2 gap-2.5 pt-1 sm:grid-cols-6 sm:items-end"
+            >
+              <div>
+                <label
+                  htmlFor="custom-ppm-min"
+                  className="block text-[11px] font-medium mb-1"
+                  style={{ color: 'var(--app-text-muted)' }}
+                >
+                  PPM Min (ppm)
+                </label>
+                <input
+                  id="custom-ppm-min"
+                  type="number"
+                  min={0}
+                  max={5000}
+                  required
+                  value={customPpmMinInput}
+                  onChange={(e) => setCustomPpmMinInput(e.target.value)}
+                  className="w-full rounded-lg border px-2.5 py-1.5 text-xs sm:text-sm font-mono-tabular focus:outline-none"
+                  style={{
+                    borderColor: 'var(--app-border)',
+                    backgroundColor: 'var(--app-surface)',
+                    color: 'var(--app-text)',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="custom-ppm-max"
+                  className="block text-[11px] font-medium mb-1"
+                  style={{ color: 'var(--app-text-muted)' }}
+                >
+                  PPM Maks (ppm)
+                </label>
+                <input
+                  id="custom-ppm-max"
+                  type="number"
+                  min={0}
+                  max={5000}
+                  required
+                  value={customPpmMaxInput}
+                  onChange={(e) => setCustomPpmMaxInput(e.target.value)}
+                  className="w-full rounded-lg border px-2.5 py-1.5 text-xs sm:text-sm font-mono-tabular focus:outline-none"
+                  style={{
+                    borderColor: 'var(--app-border)',
+                    backgroundColor: 'var(--app-surface)',
+                    color: 'var(--app-text)',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="custom-ph-min"
+                  className="block text-[11px] font-medium mb-1"
+                  style={{ color: 'var(--app-text-muted)' }}
+                >
+                  pH Min
+                </label>
+                <input
+                  id="custom-ph-min"
+                  type="number"
+                  step="0.1"
+                  min={0}
+                  max={14}
+                  required
+                  value={customPhMinInput}
+                  onChange={(e) => setCustomPhMinInput(e.target.value)}
+                  className="w-full rounded-lg border px-2.5 py-1.5 text-xs sm:text-sm font-mono-tabular focus:outline-none"
+                  style={{
+                    borderColor: 'var(--app-border)',
+                    backgroundColor: 'var(--app-surface)',
+                    color: 'var(--app-text)',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="custom-ph-max"
+                  className="block text-[11px] font-medium mb-1"
+                  style={{ color: 'var(--app-text-muted)' }}
+                >
+                  pH Maks
+                </label>
+                <input
+                  id="custom-ph-max"
+                  type="number"
+                  step="0.1"
+                  min={0}
+                  max={14}
+                  required
+                  value={customPhMaxInput}
+                  onChange={(e) => setCustomPhMaxInput(e.target.value)}
+                  className="w-full rounded-lg border px-2.5 py-1.5 text-xs sm:text-sm font-mono-tabular focus:outline-none"
+                  style={{
+                    borderColor: 'var(--app-border)',
+                    backgroundColor: 'var(--app-surface)',
+                    color: 'var(--app-text)',
+                  }}
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="inline-flex h-[34px] items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-opacity hover:opacity-90 cursor-pointer"
+                style={{
+                  backgroundColor: 'var(--app-accent)',
+                  color: 'var(--app-accent-fg)',
+                }}
+              >
+                <Check className="h-3.5 w-3.5" />
+                {targetsSavedFeedback ? 'Tersimpan' : 'Terapkan Batas'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSetTargetMode(false)}
+                className="inline-flex h-[34px] items-center justify-center gap-1 rounded-lg border px-2.5 text-xs font-medium cursor-pointer"
+                style={{
+                  borderColor: 'var(--app-border)',
+                  backgroundColor: 'var(--app-surface)',
+                  color: 'var(--app-text-muted)',
+                }}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reset Fase
+              </button>
+            </form>
+          )}
         </div>
       </section>
 
@@ -452,6 +744,9 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
             <span>
               Awal: {latestLog?.ppmBefore ?? currentWater.ppm} → Akhir: {latestLog?.ppm ?? currentWater.ppm} ppm
             </span>
+            <span>
+              Batas: {effectivePpmMin}–{effectivePpmMax}
+            </span>
           </div>
           <div className="mt-2 flex items-center gap-1.5 text-xs font-medium">
             {ppmStatus.ok ? (
@@ -484,7 +779,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
               {currentWater.ph.toFixed(2)}
             </span>
             <span className="text-xs font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
-              pH (Target {phaseSpec.phMin.toFixed(1)}–{phaseSpec.phMax.toFixed(1)})
+              pH (Target {effectivePhMin.toFixed(1)}–{effectivePhMax.toFixed(1)})
             </span>
           </div>
           <div className="mt-2 text-xs font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
@@ -1042,7 +1337,9 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
             <div className="flex items-center justify-between mb-2.5">
               <span className="text-xs font-semibold">Saklar Pompa Sirkulasi NFT ({gh.name})</span>
               <span className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
-                Notif: {notifSettings.ppmMin}–{notifSettings.ppmMax} ppm
+                {useCustomTargets
+                  ? `Pemeriksa: ${effectivePpmMin}–${effectivePpmMax} ppm · pH ${effectivePhMin.toFixed(1)}–${effectivePhMax.toFixed(1)}`
+                  : `Notif: ${notifSettings.ppmMin}–${notifSettings.ppmMax} ppm`}
               </span>
             </div>
             <button
@@ -1077,7 +1374,8 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
               <div>
                 <h3 className="text-sm font-semibold">Grafik Tren PPM & pH Larutan</h3>
                 <p className="text-xs" style={{ color: 'var(--app-text-muted)' }}>
-                  Area berbayang menunjukkan rentang target fase {phaseSpec.label}. Arahkan kursor pada titik untuk detail.
+                  Area berbayang menunjukkan rentang target{' '}
+                  {useCustomTargets ? 'kustom pemeriksa' : `fase ${phaseSpec.label}`}. Arahkan kursor pada titik untuk detail.
                 </p>
               </div>
               {hoverIdx !== null && chartPoints[hoverIdx] && (
@@ -1113,10 +1411,10 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                   title="Tren Kepekatan Nutrisi (PPM)"
                   unit="ppm"
                   values={chartPoints.map((c) => c.ppm)}
-                  minBound={350}
-                  maxBound={1150}
-                  targetMin={phaseSpec.ppmMin}
-                  targetMax={phaseSpec.ppmMax}
+                  minBound={Math.min(350, effectivePpmMin)}
+                  maxBound={Math.max(1150, effectivePpmMax)}
+                  targetMin={effectivePpmMin}
+                  targetMax={effectivePpmMax}
                   strokeColor="var(--app-accent)"
                   hoverIdx={hoverIdx}
                   onHover={setHoverIdx}
@@ -1125,10 +1423,10 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                   title="Tren Derajat Keasaman (pH)"
                   unit="pH"
                   values={chartPoints.map((c) => c.ph)}
-                  minBound={5.5}
-                  maxBound={7.8}
-                  targetMin={phaseSpec.phMin}
-                  targetMax={phaseSpec.phMax}
+                  minBound={Math.min(5.5, effectivePhMin)}
+                  maxBound={Math.max(7.8, effectivePhMax)}
+                  targetMin={effectivePhMin}
+                  targetMax={effectivePhMax}
                   strokeColor="#0284C7"
                   hoverIdx={hoverIdx}
                   onHover={setHoverIdx}

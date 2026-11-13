@@ -90,9 +90,28 @@ service cloud.firestore {
         && w.pumpPhUp is bool;
     }
 
+    function isValidWaterTargets(wt) {
+      return wt is map
+        && wt.keys().hasAll(['useCustom', 'ppmMin', 'ppmMax', 'phMin', 'phMax'])
+        && wt.keys().hasOnly(['useCustom', 'ppmMin', 'ppmMax', 'phMin', 'phMax'])
+        && wt.useCustom is bool
+        && wt.ppmMin is number
+        && wt.ppmMin >= 0
+        && wt.ppmMin <= 5000
+        && wt.ppmMax is number
+        && wt.ppmMax >= 0
+        && wt.ppmMax <= 5000
+        && wt.phMin is number
+        && wt.phMin >= 0
+        && wt.phMin <= 14
+        && wt.phMax is number
+        && wt.phMax >= 0
+        && wt.phMax <= 14;
+    }
+
     function isValidGreenhouseMeta(data, seasonId) {
       return data.keys().hasAll(['id', 'ownerUid', 'seasonId', 'name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'currentWater', 'lastModifiedBy', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'ownerUid', 'seasonId', 'name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'currentWater', 'lastModifiedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'seasonId', 'name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'waterTargets', 'currentWater', 'lastModifiedBy', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && isValidId(data.ownerUid)
         && data.ownerUid == request.auth.uid
@@ -108,6 +127,7 @@ service cloud.firestore {
         && isStringBounded(data.harvestDate, 32)
         && data.phase in ['semai', 'vegetatif', 'generatif', 'pembesaran']
         && data.ecFactor in [500, 700]
+        && (!('waterTargets' in data) || isValidWaterTargets(data.waterTargets))
         && isValidCurrentWater(data.currentWater)
         && isStringBounded(data.lastModifiedBy, 120)
         && data.createdAt is timestamp
@@ -282,7 +302,8 @@ service cloud.firestore {
           && (
             incoming().diff(existing()).affectedKeys().hasOnly(['currentWater', 'lastModifiedBy', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly(['harvestDate', 'lastModifiedBy', 'updatedAt'])
-            || incoming().diff(existing()).affectedKeys().hasOnly(['name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'currentWater', 'lastModifiedBy', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['waterTargets', 'lastModifiedBy', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'waterTargets', 'currentWater', 'lastModifiedBy', 'updatedAt'])
           );
         allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && existing().ownerUid == request.auth.uid;
 
