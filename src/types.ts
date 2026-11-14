@@ -2,6 +2,8 @@ export type BotanicalThemeId =
   | 'daun-melon'
   | 'rumah-kaca'
   | 'hidroponik-malam'
+  | 'embun-obsidian'
+  | 'karbon-melon'
   | 'tanah-bambu'
   | 'kabut-pagi';
 

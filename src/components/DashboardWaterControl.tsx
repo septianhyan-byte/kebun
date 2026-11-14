@@ -587,8 +587,12 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                   type="number"
                   min={0}
                   max={5000}
+                  placeholder="0"
                   required
                   value={customPpmMinInput}
+                  onFocus={(e) => {
+                    if (e.currentTarget.value === '0') e.currentTarget.select();
+                  }}
                   onChange={(e) => setCustomPpmMinInput(e.target.value)}
                   className="w-full rounded-lg border px-2.5 py-1.5 text-xs sm:text-sm font-mono-tabular focus:outline-none"
                   style={{
@@ -612,8 +616,12 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                   type="number"
                   min={0}
                   max={5000}
+                  placeholder="0"
                   required
                   value={customPpmMaxInput}
+                  onFocus={(e) => {
+                    if (e.currentTarget.value === '0') e.currentTarget.select();
+                  }}
                   onChange={(e) => setCustomPpmMaxInput(e.target.value)}
                   className="w-full rounded-lg border px-2.5 py-1.5 text-xs sm:text-sm font-mono-tabular focus:outline-none"
                   style={{
@@ -964,7 +972,11 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                     min={0}
                     max={2000}
                     step="1"
+                    placeholder="0"
                     value={waterAddedLiters}
+                    onFocus={(e) => {
+                      if (e.currentTarget.value === '0') e.currentTarget.select();
+                    }}
                     onChange={(e) => handleWaterChange(e.target.value)}
                     className="w-full rounded-lg border px-3 py-2 text-sm font-mono-tabular focus:outline-none"
                     style={{
@@ -1077,7 +1089,11 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                         type="number"
                         min={0}
                         max={5000}
+                        placeholder="0"
                         value={phAdjMl}
+                        onFocus={(e) => {
+                          if (e.currentTarget.value === '0') e.currentTarget.select();
+                        }}
                         onChange={(e) => handlePhMlChange(e.target.value)}
                         className="w-full rounded-lg border px-3 py-2 text-sm font-mono-tabular focus:outline-none"
                         style={{

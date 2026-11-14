@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Bell, Check, Palette, Type, Volume2, X } from 'lucide-react';
 import { ACCENT_PRESETS, BOTANICAL_THEMES, FONT_OPTIONS } from '../constants/themes';
 import { AppSettings } from '../types';
@@ -20,7 +20,81 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [section, setSection] = useState<'tema' | 'font' | 'warna' | 'notifikasi'>('tema');
   const [browserPermMsg, setBrowserPermMsg] = useState<string>('');
 
+  const [ppmMinDraft, setPpmMinDraft] = useState(String(settings.notifications.ppmMin));
+  const [ppmMaxDraft, setPpmMaxDraft] = useState(String(settings.notifications.ppmMax));
+  const [phMinDraft, setPhMinDraft] = useState(String(settings.notifications.phMin));
+  const [phMaxDraft, setPhMaxDraft] = useState(String(settings.notifications.phMax));
+  const [sickThresholdDraft, setSickThresholdDraft] = useState(
+    String(settings.notifications.sickPlantThreshold)
+  );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setPpmMinDraft(String(settings.notifications.ppmMin));
+    setPpmMaxDraft(String(settings.notifications.ppmMax));
+    setPhMinDraft(String(settings.notifications.phMin));
+    setPhMaxDraft(String(settings.notifications.phMax));
+    setSickThresholdDraft(String(settings.notifications.sickPlantThreshold));
+    // Sync drafts only when opening modal so clearing 0 while typing never snaps back
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
+  const handleThresholdChange = (
+    field: 'ppmMin' | 'ppmMax' | 'phMin' | 'phMax' | 'sickPlantThreshold',
+    raw: string
+  ) => {
+    if (field === 'ppmMin') setPpmMinDraft(raw);
+    else if (field === 'ppmMax') setPpmMaxDraft(raw);
+    else if (field === 'phMin') setPhMinDraft(raw);
+    else if (field === 'phMax') setPhMaxDraft(raw);
+    else setSickThresholdDraft(raw);
+
+    if (raw.trim() === '') {
+      if (field === 'ppmMin' || field === 'ppmMax' || field === 'phMin' || field === 'phMax') {
+        onUpdateSettings({
+          ...settings,
+          notifications: {
+            ...settings.notifications,
+            [field]: 0,
+          },
+        });
+      }
+      return;
+    }
+
+    const parsed = Number(raw);
+    if (Number.isNaN(parsed)) return;
+
+    const clamped =
+      field === 'sickPlantThreshold'
+        ? Math.max(1, Math.round(parsed))
+        : Math.max(0, parsed);
+
+    onUpdateSettings({
+      ...settings,
+      notifications: {
+        ...settings.notifications,
+        [field]: clamped,
+      },
+    });
+  };
+
+  const handleThresholdBlur = (
+    field: 'ppmMin' | 'ppmMax' | 'phMin' | 'phMax' | 'sickPlantThreshold'
+  ) => {
+    if (field === 'sickPlantThreshold') {
+      const parsed = Number(sickThresholdDraft);
+      if (sickThresholdDraft.trim() !== '' && (Number.isNaN(parsed) || parsed < 1)) {
+        setSickThresholdDraft('1');
+        onUpdateSettings({
+          ...settings,
+          notifications: { ...settings.notifications, sickPlantThreshold: 1 },
+        });
+      }
+    }
+  };
 
   const handleBrowserNotifyToggle = async () => {
     if (!settings.notifications.browserNotify) {
@@ -122,7 +196,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {section === 'tema' && (
             <div className="space-y-3">
               <div className="text-xs font-medium" style={{ color: 'var(--app-text-muted)' }}>
-                Pilih tema nuansa tanaman & rumah kaca hidroponik:
+                Pilih tema nuansa tanaman & rumah kaca hidroponik (4 tema terang & 3 tema gelap):
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {BOTANICAL_THEMES.map((theme) => {
@@ -405,16 +479,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <label className="block text-[11px] font-medium mb-1">PPM Min</label>
                     <input
                       type="number"
-                      value={settings.notifications.ppmMin}
-                      onChange={(e) =>
-                        onUpdateSettings({
-                          ...settings,
-                          notifications: {
-                            ...settings.notifications,
-                            ppmMin: Number(e.target.value) || 0,
-                          },
-                        })
-                      }
+                      min={0}
+                      placeholder="0"
+                      value={ppmMinDraft}
+                      onFocus={(e) => {
+                        if (e.currentTarget.value === '0') e.currentTarget.select();
+                      }}
+                      onChange={(e) => handleThresholdChange('ppmMin', e.target.value)}
                       className="w-full rounded-lg border px-2.5 py-1.5 text-xs font-mono-tabular"
                       style={{
                         borderColor: 'var(--app-border)',
@@ -427,16 +498,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <label className="block text-[11px] font-medium mb-1">PPM Maks</label>
                     <input
                       type="number"
-                      value={settings.notifications.ppmMax}
-                      onChange={(e) =>
-                        onUpdateSettings({
-                          ...settings,
-                          notifications: {
-                            ...settings.notifications,
-                            ppmMax: Number(e.target.value) || 0,
-                          },
-                        })
-                      }
+                      min={0}
+                      placeholder="0"
+                      value={ppmMaxDraft}
+                      onFocus={(e) => {
+                        if (e.currentTarget.value === '0') e.currentTarget.select();
+                      }}
+                      onChange={(e) => handleThresholdChange('ppmMax', e.target.value)}
                       className="w-full rounded-lg border px-2.5 py-1.5 text-xs font-mono-tabular"
                       style={{
                         borderColor: 'var(--app-border)',
@@ -450,16 +518,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <input
                       type="number"
                       step="0.1"
-                      value={settings.notifications.phMin}
-                      onChange={(e) =>
-                        onUpdateSettings({
-                          ...settings,
-                          notifications: {
-                            ...settings.notifications,
-                            phMin: Number(e.target.value) || 6.5,
-                          },
-                        })
-                      }
+                      min={0}
+                      max={14}
+                      placeholder="0"
+                      value={phMinDraft}
+                      onFocus={(e) => {
+                        if (e.currentTarget.value === '0') e.currentTarget.select();
+                      }}
+                      onChange={(e) => handleThresholdChange('phMin', e.target.value)}
                       className="w-full rounded-lg border px-2.5 py-1.5 text-xs font-mono-tabular"
                       style={{
                         borderColor: 'var(--app-border)',
@@ -473,16 +539,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <input
                       type="number"
                       step="0.1"
-                      value={settings.notifications.phMax}
-                      onChange={(e) =>
-                        onUpdateSettings({
-                          ...settings,
-                          notifications: {
-                            ...settings.notifications,
-                            phMax: Number(e.target.value) || 7.0,
-                          },
-                        })
-                      }
+                      min={0}
+                      max={14}
+                      placeholder="0"
+                      value={phMaxDraft}
+                      onFocus={(e) => {
+                        if (e.currentTarget.value === '0') e.currentTarget.select();
+                      }}
+                      onChange={(e) => handleThresholdChange('phMax', e.target.value)}
                       className="w-full rounded-lg border px-2.5 py-1.5 text-xs font-mono-tabular"
                       style={{
                         borderColor: 'var(--app-border)',
@@ -496,16 +560,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <input
                       type="number"
                       min={1}
-                      value={settings.notifications.sickPlantThreshold}
-                      onChange={(e) =>
-                        onUpdateSettings({
-                          ...settings,
-                          notifications: {
-                            ...settings.notifications,
-                            sickPlantThreshold: Math.max(1, Number(e.target.value) || 1),
-                          },
-                        })
-                      }
+                      placeholder="1"
+                      value={sickThresholdDraft}
+                      onFocus={(e) => {
+                        if (e.currentTarget.value === '0') e.currentTarget.select();
+                      }}
+                      onChange={(e) => handleThresholdChange('sickPlantThreshold', e.target.value)}
+                      onBlur={() => handleThresholdBlur('sickPlantThreshold')}
                       className="w-full rounded-lg border px-2.5 py-1.5 text-xs font-mono-tabular"
                       style={{
                         borderColor: 'var(--app-border)',
