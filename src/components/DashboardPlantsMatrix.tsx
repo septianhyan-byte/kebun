@@ -10,6 +10,7 @@ import {
   Grid3X3,
   Layers,
   RotateCcw,
+  Scale,
   Search,
   Sparkles,
   Trash2,
@@ -128,6 +129,65 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     }
     return res;
   }, [gh.plants]);
+
+  const weightMetrics = useMemo(() => {
+    let sampledCount = 0;
+    let totalSampleWeightKg = 0;
+    let fruitingActiveCount = 0;
+    let totalFruits = 0;
+
+    for (const p of gh.plants) {
+      if (p.status === 'kosong') continue;
+      if (p.estWeightKg > 0) {
+        sampledCount += 1;
+        totalSampleWeightKg += p.estWeightKg;
+      }
+      if (getFruiting(p) === 'berbuah') {
+        fruitingActiveCount += 1;
+        totalFruits += Math.max(1, p.fruitCount || 0);
+      }
+    }
+
+    const sampleAvgKg = sampledCount > 0 ? totalSampleWeightKg / sampledCount : 0;
+    const effectiveAvgKg =
+      typeof gh.avgMelonWeightKg === 'number' && !Number.isNaN(gh.avgMelonWeightKg)
+        ? gh.avgMelonWeightKg
+        : sampleAvgKg > 0
+        ? Number(sampleAvgKg.toFixed(2))
+        : 1.5;
+
+    const estimatedTotalKg = totalFruits * effectiveAvgKg;
+    return {
+      sampledCount,
+      totalSampleWeightKg,
+      sampleAvgKg,
+      fruitingActiveCount,
+      totalFruits,
+      effectiveAvgKg,
+      estimatedTotalKg,
+    };
+  }, [gh.plants, gh.avgMelonWeightKg]);
+
+  const [avgWeightInput, setAvgWeightInput] = useState<string>(() =>
+    String(weightMetrics.effectiveAvgKg)
+  );
+  const lastAvgGhRef = useRef<string>(gh.id);
+  const lastAvgExtRef = useRef<number | undefined>(gh.avgMelonWeightKg);
+
+  useEffect(() => {
+    if (lastAvgGhRef.current !== gh.id) {
+      lastAvgGhRef.current = gh.id;
+      lastAvgExtRef.current = gh.avgMelonWeightKg;
+      setAvgWeightInput(String(weightMetrics.effectiveAvgKg));
+      return;
+    }
+    if (lastAvgExtRef.current !== gh.avgMelonWeightKg) {
+      lastAvgExtRef.current = gh.avgMelonWeightKg;
+      if (typeof gh.avgMelonWeightKg === 'number') {
+        setAvgWeightInput(String(gh.avgMelonWeightKg));
+      }
+    }
+  }, [gh.id, gh.avgMelonWeightKg, weightMetrics.effectiveAvgKg]);
 
   const blockCount = Math.max(1, Math.ceil(gh.plants.length / 100));
 
@@ -553,6 +613,176 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
               </button>
             );
           })}
+        </div>
+
+        {/* Rata-Rata Berat Melon & Perkiraan Total Berat Melon */}
+        <div
+          className="rounded-xl border p-4"
+          style={{
+            backgroundColor: 'var(--app-surface)',
+            borderColor: 'var(--app-border)',
+          }}
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-start gap-3">
+              <span
+                className="flex h-9 w-9 items-center justify-center rounded-lg shrink-0"
+                style={{
+                  backgroundColor: 'var(--app-accent-soft)',
+                  color: 'var(--app-accent)',
+                }}
+              >
+                <Scale className="h-4 w-4" />
+              </span>
+              <div>
+                <div className="text-xs font-bold">
+                  Rata-Rata Berat Melon &amp; Perkiraan Total Panen ({gh.name})
+                </div>
+                <p className="mt-0.5 text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                  Hitung perkiraan total tonase panen dari rata-rata berat buah (kg/melon) dikalikan total buah yang berbuah.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:flex lg:flex-wrap lg:items-center lg:gap-4">
+              {/* Editable Average Weight Input */}
+              <div className="col-span-2 sm:col-span-1">
+                <label
+                  htmlFor="avg-melon-weight-input"
+                  className="block text-[11px] font-medium mb-1"
+                  style={{ color: 'var(--app-text-muted)' }}
+                >
+                  Rata-Rata / Buah (kg)
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    id="avg-melon-weight-input"
+                    type="number"
+                    step="0.05"
+                    min={0}
+                    max={50}
+                    placeholder="0"
+                    value={avgWeightInput}
+                    onFocus={(e) => {
+                      if (e.currentTarget.value === '0') e.currentTarget.select();
+                    }}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setAvgWeightInput(raw);
+                      if (raw.trim() === '') {
+                        lastAvgExtRef.current = 0;
+                        onUpdateGh((prev) => ({ ...prev, avgMelonWeightKg: 0 }));
+                        return;
+                      }
+                      const num = Number(raw);
+                      if (!Number.isNaN(num)) {
+                        const clamped = Math.min(50, Math.max(0, Number(num.toFixed(2))));
+                        lastAvgExtRef.current = clamped;
+                        onUpdateGh((prev) => ({ ...prev, avgMelonWeightKg: clamped }));
+                      }
+                    }}
+                    className="h-9 w-24 rounded-lg border px-2.5 text-sm font-bold font-mono-tabular focus:outline-none"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-canvas)',
+                      color: 'var(--app-text)',
+                    }}
+                  />
+                  {weightMetrics.sampleAvgKg > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const rounded = Number(weightMetrics.sampleAvgKg.toFixed(2));
+                        lastAvgExtRef.current = rounded;
+                        setAvgWeightInput(String(rounded));
+                        onUpdateGh((prev) => ({ ...prev, avgMelonWeightKg: rounded }));
+                      }}
+                      title={`Gunakan rata-rata dari ${weightMetrics.sampledCount} sampel pohon (${weightMetrics.sampleAvgKg.toFixed(2)} kg)`}
+                      className="h-9 rounded-lg border px-2.5 text-[11px] font-semibold whitespace-nowrap cursor-pointer"
+                      style={{
+                        borderColor: 'var(--app-border)',
+                        backgroundColor: 'var(--app-surface-muted)',
+                        color: 'var(--app-accent)',
+                      }}
+                    >
+                      Sampel ({weightMetrics.sampleAvgKg.toFixed(2)} kg)
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Buah Aktif */}
+              <div
+                className="rounded-lg border px-3 py-2"
+                style={{
+                  borderColor: 'var(--app-border)',
+                  backgroundColor: 'var(--app-canvas)',
+                }}
+              >
+                <div className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                  Total Buah Aktif
+                </div>
+                <div className="text-sm font-bold font-mono-tabular">
+                  {weightMetrics.totalFruits.toLocaleString('id-ID')} buah
+                </div>
+                <div className="text-[10px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                  {weightMetrics.fruitingActiveCount.toLocaleString('id-ID')} pohon berbuah
+                </div>
+              </div>
+
+              {/* Total Bobot Tercatat Sampel */}
+              <div
+                className="rounded-lg border px-3 py-2"
+                style={{
+                  borderColor: 'var(--app-border)',
+                  backgroundColor: 'var(--app-canvas)',
+                }}
+              >
+                <div className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                  Total Sampel Input
+                </div>
+                <div className="text-sm font-bold font-mono-tabular">
+                  {weightMetrics.totalSampleWeightKg.toLocaleString('id-ID', {
+                    maximumFractionDigits: 1,
+                  })}{' '}
+                  kg
+                </div>
+                <div className="text-[10px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                  {weightMetrics.sampledCount.toLocaleString('id-ID')} pohon terisi bobot
+                </div>
+              </div>
+
+              {/* Perkiraan Total Berat Melon */}
+              <div
+                className="col-span-2 sm:col-span-1 rounded-lg border px-3.5 py-2"
+                style={{
+                  borderColor: 'var(--app-accent)',
+                  backgroundColor: 'var(--app-accent-soft)',
+                }}
+              >
+                <div className="text-[11px] font-semibold" style={{ color: 'var(--app-accent)' }}>
+                  Perkiraan Total Berat Melon
+                </div>
+                <div className="text-base sm:text-lg font-bold font-mono-tabular" style={{ color: 'var(--app-accent)' }}>
+                  {weightMetrics.estimatedTotalKg.toLocaleString('id-ID', {
+                    maximumFractionDigits: 1,
+                  })}{' '}
+                  kg
+                </div>
+                <div className="text-[10px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                  {(weightMetrics.estimatedTotalKg / 100).toLocaleString('id-ID', {
+                    maximumFractionDigits: 2,
+                  })}{' '}
+                  kuintal
+                  {weightMetrics.estimatedTotalKg >= 1000
+                    ? ` · ${(weightMetrics.estimatedTotalKg / 1000).toLocaleString('id-ID', {
+                        maximumFractionDigits: 2,
+                      })} ton`
+                    : ''}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 

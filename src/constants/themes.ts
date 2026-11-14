@@ -1,9 +1,11 @@
 import {
   BotanicalThemeId,
+  ExpenseCategory,
   FontOptionId,
   FruitingStatus,
   GrowthPhase,
   PlantHealthStatus,
+  SaleGrade,
   SprayCategory,
   TreatmentType,
 } from '../types';
@@ -382,4 +384,109 @@ export const FRUITING_STATUS_META: Record<
     colorClass: 'text-amber-700 dark:text-amber-400',
   },
 };
+
+export const EXPENSE_CATEGORY_META: Record<
+  ExpenseCategory,
+  { label: string; short: string; defaultUnit: string; desc: string }
+> = {
+  pupuk: {
+    label: '1. Pupuk',
+    short: 'Pupuk',
+    defaultUnit: 'kg',
+    desc: 'MKP, Java Green, KNO3, Calcium Active, Calnit, SOP, dll.',
+  },
+  fungisida: {
+    label: '2. Fungisida',
+    short: 'Fungisida',
+    defaultUnit: 'Bungkus',
+    desc: 'Antracol, Antila, Agrept, Besromil, Dithane, Heksa, Pemulus.',
+  },
+  insektisida: {
+    label: '3. Insektisida',
+    short: 'Insektisida',
+    defaultUnit: 'Botol',
+    desc: 'Abacel, Avidor, Demolish, Torso, Winder.',
+  },
+  tenaga_kerja: {
+    label: '4. Tenaga Kerja',
+    short: 'Tenaga Kerja',
+    defaultUnit: 'HOK',
+    desc: 'Upah tanam, perawatan, polinasi, panen, dan operator.',
+  },
+  lainnya: {
+    label: '5. Lainnya (Benih & AB MIX)',
+    short: 'Lainnya',
+    defaultUnit: 'SET',
+    desc: 'Benih (Inthanon, The Blues, Kirin, Petravany, Honey Globe), AB MIX (SET).',
+  },
+};
+
+export interface ExpensePresetOption {
+  name: string;
+  defaultUnit: string;
+}
+
+export const EXPENSE_PRESET_OPTIONS: Record<ExpenseCategory, ExpensePresetOption[]> = {
+  pupuk: [
+    { name: 'MKP', defaultUnit: 'kg' },
+    { name: 'Java Green', defaultUnit: 'kg' },
+    { name: 'Java Higros', defaultUnit: 'kg' },
+    { name: 'Java bloom', defaultUnit: 'kg' },
+    { name: 'KNO3', defaultUnit: 'kg' },
+    { name: 'Calcium Active', defaultUnit: 'Liter' },
+    { name: 'Magnesium Sulfat', defaultUnit: 'kg' },
+    { name: 'Calnit', defaultUnit: 'kg' },
+    { name: 'Vitamin B1', defaultUnit: 'Botol' },
+    { name: 'Ambition', defaultUnit: 'Liter' },
+    { name: 'MAP', defaultUnit: 'kg' },
+    { name: 'SOP', defaultUnit: 'kg' },
+    { name: 'CNG', defaultUnit: 'kg' },
+  ],
+  fungisida: [
+    { name: 'Antracol', defaultUnit: 'Bungkus' },
+    { name: 'Antila', defaultUnit: 'Botol' },
+    { name: 'Agrept', defaultUnit: 'Bungkus' },
+    { name: 'Besromil', defaultUnit: 'Bungkus' },
+    { name: 'Dithane', defaultUnit: 'kg' },
+    { name: 'Heksa', defaultUnit: 'Botol' },
+    { name: 'Pemulus', defaultUnit: 'Bungkus' },
+  ],
+  insektisida: [
+    { name: 'Abacel', defaultUnit: 'Botol' },
+    { name: 'Avidor', defaultUnit: 'Bungkus' },
+    { name: 'Demolish', defaultUnit: 'Botol' },
+    { name: 'Torso', defaultUnit: 'Botol' },
+    { name: 'Winder', defaultUnit: 'Bungkus' },
+  ],
+  tenaga_kerja: [
+    { name: 'Tenaga Tanam & Pindah Bibit', defaultUnit: 'HOK' },
+    { name: 'Tenaga Perawatan & Pruning', defaultUnit: 'HOK' },
+    { name: 'Tenaga Polinasi & Seleksi Buah', defaultUnit: 'HOK' },
+    { name: 'Tenaga Penyemprotan & Kocor', defaultUnit: 'HOK' },
+    { name: 'Tenaga Panen & Sortir', defaultUnit: 'HOK' },
+    { name: 'Gaji Penjaga / Operator GH', defaultUnit: 'Bulan' },
+  ],
+  lainnya: [
+    { name: 'AB MIX', defaultUnit: 'SET' },
+    { name: 'Benih: Inthanon', defaultUnit: 'Pack' },
+    { name: 'Benih: The Blues', defaultUnit: 'Pack' },
+    { name: 'Benih: Kirin', defaultUnit: 'Pack' },
+    { name: 'Benih: Petravany', defaultUnit: 'Pack' },
+    { name: 'Benih: Honey Globe', defaultUnit: 'Pack' },
+  ],
+};
+
+export const SALE_GRADE_OPTIONS: Array<{
+  grade: SaleGrade;
+  desc: string;
+  badgeColor: string;
+}> = [
+  { grade: 'Grade A', desc: 'Kualitas super, net rata & bobot optimal', badgeColor: '#16A34A' },
+  { grade: 'Grade B', desc: 'Kualitas standar baik pasar ritel/modern', badgeColor: '#0D9488' },
+  { grade: 'Grade C', desc: 'Ukuran sedang / minor netting', badgeColor: '#0284C7' },
+  { grade: 'Grade D', desc: 'Ukuran kecil / buah sortiran bawah', badgeColor: '#D97706' },
+  { grade: 'Plonco', desc: 'Buah muda / reject teknis / pecah awal', badgeColor: '#DC2626' },
+  { grade: 'Jual sendiri', desc: 'Penjualan langsung eceran / ke konsumen kebun', badgeColor: '#7C3AED' },
+];
+
 

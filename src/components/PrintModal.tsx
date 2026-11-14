@@ -1,15 +1,17 @@
 import React, { useMemo, useState } from 'react';
 import {
   CheckCircle2,
+  CheckSquare,
   Eye,
   FileText,
   Printer,
   Receipt,
+  Square,
   Usb,
   Wifi,
   X,
 } from 'lucide-react';
-import { GreenhouseData, SeasonDocument } from '../types';
+import { DashboardTab, GreenhouseData, PrintSelection, SeasonDocument } from '../types';
 import {
   formatEscPosReport,
   getPrinterCapabilities,
@@ -18,23 +20,69 @@ import {
 } from '../utils/printer';
 import { PrintableReport } from './PrintableReport';
 
-export type PrintScope = 'all' | 'water' | 'treatment' | 'plants';
-
 interface PrintModalProps {
   isOpen: boolean;
   document: SeasonDocument;
+  allDocuments: SeasonDocument[];
   activeGh: GreenhouseData;
-  printScope: PrintScope;
-  onChangePrintScope: (scope: PrintScope) => void;
+  activeTab: DashboardTab;
+  printSelection: PrintSelection;
+  onChangePrintSelection: (selection: PrintSelection) => void;
   onClose: () => void;
 }
+
+const PRINT_SECTION_ITEMS: Array<{
+  key: keyof PrintSelection;
+  group: 'Operasional Kebun' | 'Pembukuan Melon';
+  label: string;
+  desc: string;
+}> = [
+  {
+    key: 'water',
+    group: 'Operasional Kebun',
+    label: '1. Kontrol PPM & pH Tandon',
+    desc: 'Status tandon & log PPM/pH manual',
+  },
+  {
+    key: 'treatment',
+    group: 'Operasional Kebun',
+    label: '2. Perawatan Obat & Pupuk Daun',
+    desc: 'Jadwal & riwayat semprot, oles, kocor',
+  },
+  {
+    key: 'plants',
+    group: 'Operasional Kebun',
+    label: '3. Kondisi Tanaman & Perkiraan Berat',
+    desc: 'Rekap kesehatan, berbuah & rata-rata bobot melon',
+  },
+  {
+    key: 'accountingExpenses',
+    group: 'Pembukuan Melon',
+    label: '4A. Biaya Produksi (Dashboard 1)',
+    desc: 'Pupuk, fungisida, insektisida, tenaga kerja, benih, AB MIX',
+  },
+  {
+    key: 'accountingSales',
+    group: 'Pembukuan Melon',
+    label: '4B. Penjualan Melon (Dashboard 2)',
+    desc: 'Grade A–D, Plonco, Jual sendiri, total kg & Rupiah',
+  },
+  {
+    key: 'accountingProfit',
+    group: 'Pembukuan Melon',
+    label: '4C. Keuntungan & Rekap Periode/Tahunan',
+    desc: 'Laba bersih, margin, rekap periode panen & tahunan',
+  },
+];
 
 export const PrintModal: React.FC<PrintModalProps> = ({
   isOpen,
   document,
+  allDocuments,
   activeGh,
-  printScope,
-  onChangePrintScope,
+  activeTab,
+  printSelection,
+  onChangePrintSelection,
   onClose,
 }) => {
   const [printerFeedback, setPrinterFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -42,13 +90,75 @@ export const PrintModal: React.FC<PrintModalProps> = ({
   const [previewTab, setPreviewTab] = useState<'a4' | 'thermal'>('a4');
   const caps = useMemo(() => getPrinterCapabilities(), []);
   const escPosText = useMemo(
-    () => formatEscPosReport(document, activeGh),
-    [document, activeGh]
+    () => formatEscPosReport(document, activeGh, printSelection),
+    [document, activeGh, printSelection]
+  );
+
+  const selectedCount = useMemo(
+    () => Object.values(printSelection).filter(Boolean).length,
+    [printSelection]
   );
 
   if (!isOpen) return null;
 
+  const toggleSection = (key: keyof PrintSelection) => {
+    onChangePrintSelection({
+      ...printSelection,
+      [key]: !printSelection[key],
+    });
+  };
+
+  const applyPreset = (preset: 'all' | 'operations' | 'accounting' | 'activeTab' | 'none') => {
+    if (preset === 'all') {
+      onChangePrintSelection({
+        water: true,
+        treatment: true,
+        plants: true,
+        accountingExpenses: true,
+        accountingSales: true,
+        accountingProfit: true,
+      });
+    } else if (preset === 'operations') {
+      onChangePrintSelection({
+        water: true,
+        treatment: true,
+        plants: true,
+        accountingExpenses: false,
+        accountingSales: false,
+        accountingProfit: false,
+      });
+    } else if (preset === 'accounting') {
+      onChangePrintSelection({
+        water: false,
+        treatment: false,
+        plants: false,
+        accountingExpenses: true,
+        accountingSales: true,
+        accountingProfit: true,
+      });
+    } else if (preset === 'activeTab') {
+      onChangePrintSelection({
+        water: activeTab === 'water',
+        treatment: activeTab === 'treatment',
+        plants: activeTab === 'plants',
+        accountingExpenses: activeTab === 'accounting',
+        accountingSales: activeTab === 'accounting',
+        accountingProfit: activeTab === 'accounting',
+      });
+    } else {
+      onChangePrintSelection({
+        water: false,
+        treatment: false,
+        plants: false,
+        accountingExpenses: false,
+        accountingSales: false,
+        accountingProfit: false,
+      });
+    }
+  };
+
   const handleSystemPrintPdf = () => {
+    if (selectedCount === 0) return;
     setPrinterFeedback(null);
     onClose();
     setTimeout(() => {
@@ -57,6 +167,7 @@ export const PrintModal: React.FC<PrintModalProps> = ({
   };
 
   const handleSerialPrint = async () => {
+    if (selectedCount === 0) return;
     const res = await printViaWebSerial(escPosText);
     setPrinterFeedback({ ok: res.success, msg: res.message });
     if (res.success && res.printerName) {
@@ -65,6 +176,7 @@ export const PrintModal: React.FC<PrintModalProps> = ({
   };
 
   const handleUsbPrint = async () => {
+    if (selectedCount === 0) return;
     const res = await printViaWebUsb(escPosText);
     setPrinterFeedback({ ok: res.success, msg: res.message });
     if (res.success && res.printerName) {
@@ -94,7 +206,7 @@ export const PrintModal: React.FC<PrintModalProps> = ({
         >
           <div className="min-w-0 pr-2">
             <h2 className="text-sm sm:text-base font-bold truncate">
-              Cetak Laporan (PDF, Printer Sistem & Thermal) + Live Preview
+              Cetak Laporan (PDF, Printer Sistem &amp; Thermal) + Live Preview
             </h2>
             <p className="text-xs truncate" style={{ color: 'var(--app-text-muted)' }}>
               {document.title} · {activeGh.name} ({activeGh.variety})
@@ -116,38 +228,128 @@ export const PrintModal: React.FC<PrintModalProps> = ({
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
             {/* Left: Print Options & Controls (5 cols) */}
             <div className="space-y-4 lg:col-span-5">
-              {/* Scope selection */}
-              <div>
-                <div className="text-xs font-semibold mb-2">
-                  1. Pilih Isi Laporan yang Akan Dicetak
+              {/* Selective Checkboxes */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold">
+                    1. Pilih Bagian yang Akan Dicetak ({selectedCount}/6 dipilih)
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      { id: 'all', label: 'Semua Dashboard (1–3)' },
-                      { id: 'water', label: 'Dashboard 1: PPM & pH' },
-                      { id: 'treatment', label: 'Dashboard 2: Perawatan' },
-                      { id: 'plants', label: 'Dashboard 3: 1–1000' },
-                    ] as Array<{ id: PrintScope; label: string }>
-                  ).map((item) => {
-                    const active = printScope === item.id;
+
+                {/* Quick Presets */}
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('all')}
+                    className="rounded-md border px-2 py-1 text-[11px] font-semibold cursor-pointer"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-surface-muted)',
+                    }}
+                  >
+                    Pilih Semua
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('operations')}
+                    className="rounded-md border px-2 py-1 text-[11px] font-medium cursor-pointer"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-canvas)',
+                    }}
+                  >
+                    Operasional Kebun
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('accounting')}
+                    className="rounded-md border px-2 py-1 text-[11px] font-medium cursor-pointer"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-canvas)',
+                    }}
+                  >
+                    Pembukuan Melon
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('activeTab')}
+                    className="rounded-md border px-2 py-1 text-[11px] font-medium cursor-pointer"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-canvas)',
+                    }}
+                  >
+                    Hanya Tab Aktif
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('none')}
+                    className="rounded-md border px-2 py-1 text-[11px] font-medium cursor-pointer"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      color: 'var(--app-text-muted)',
+                    }}
+                  >
+                    Bersihkan
+                  </button>
+                </div>
+
+                {/* Multi-select checkbox cards */}
+                <div className="space-y-1.5">
+                  {PRINT_SECTION_ITEMS.map((item) => {
+                    const checked = printSelection[item.key];
                     return (
                       <button
-                        key={item.id}
+                        key={item.key}
                         type="button"
-                        onClick={() => onChangePrintScope(item.id)}
-                        className="rounded-lg border px-3 py-2 text-xs font-medium text-left transition-colors cursor-pointer"
+                        onClick={() => toggleSection(item.key)}
+                        className="flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors cursor-pointer"
                         style={{
-                          borderColor: active ? 'var(--app-accent)' : 'var(--app-border)',
-                          backgroundColor: active ? 'var(--app-accent-soft)' : 'var(--app-canvas)',
-                          color: active ? 'var(--app-accent)' : 'var(--app-text)',
+                          borderColor: checked ? 'var(--app-accent)' : 'var(--app-border)',
+                          backgroundColor: checked ? 'var(--app-accent-soft)' : 'var(--app-canvas)',
                         }}
                       >
-                        {item.label}
+                        {checked ? (
+                          <CheckSquare
+                            className="mt-0.5 h-4 w-4 shrink-0"
+                            style={{ color: 'var(--app-accent)' }}
+                          />
+                        ) : (
+                          <Square
+                            className="mt-0.5 h-4 w-4 shrink-0"
+                            style={{ color: 'var(--app-text-muted)' }}
+                          />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span
+                              className="text-xs font-semibold truncate"
+                              style={{ color: checked ? 'var(--app-accent)' : 'var(--app-text)' }}
+                            >
+                              {item.label}
+                            </span>
+                            <span
+                              className="text-[10px] shrink-0"
+                              style={{ color: 'var(--app-text-muted)' }}
+                            >
+                              {item.group}
+                            </span>
+                          </div>
+                          <div className="text-[11px] truncate" style={{ color: 'var(--app-text-muted)' }}>
+                            {item.desc}
+                          </div>
+                        </div>
                       </button>
                     );
                   })}
                 </div>
+
+                {selectedCount === 0 && (
+                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
+                    Centang minimal 1 bagian di atas sebelum mencetak.
+                  </div>
+                )}
               </div>
 
               {/* Option A: System Printer / Save as PDF */}
@@ -170,15 +372,16 @@ export const PrintModal: React.FC<PrintModalProps> = ({
                 <div className="flex flex-col gap-2">
                   <button
                     type="button"
+                    disabled={selectedCount === 0}
                     onClick={handleSystemPrintPdf}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold cursor-pointer"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
                     style={{
                       backgroundColor: 'var(--app-accent)',
                       color: 'var(--app-accent-fg)',
                     }}
                   >
                     <Printer className="h-4 w-4" />
-                    Cetak / Simpan sebagai PDF
+                    Cetak / Simpan sebagai PDF ({selectedCount} Bagian)
                   </button>
                   <span className="text-[11px] text-center" style={{ color: 'var(--app-text-muted)' }}>
                     Format kertas A4 Portrait · Sesuai pratinjau di samping
@@ -208,7 +411,7 @@ export const PrintModal: React.FC<PrintModalProps> = ({
                 </div>
 
                 <p className="text-xs leading-relaxed" style={{ color: 'var(--app-text-muted)' }}>
-                  Cetak struk ringkasan kebun ke printer thermal 58mm/80mm melalui kabel USB OTG atau Serial Bluetooth tanpa dialog OS.
+                  Cetak struk ringkasan kebun &amp; pembukuan ke printer thermal 58mm/80mm melalui kabel USB OTG atau Serial Bluetooth.
                 </p>
 
                 <div className="flex flex-wrap gap-x-2 gap-y-1 text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
@@ -222,33 +425,35 @@ export const PrintModal: React.FC<PrintModalProps> = ({
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1">
                   <button
                     type="button"
+                    disabled={selectedCount === 0}
                     onClick={() => {
                       setPreviewTab('thermal');
                       handleSerialPrint();
                     }}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold cursor-pointer"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold cursor-pointer disabled:opacity-45"
                     style={{
                       borderColor: 'var(--app-border)',
                       backgroundColor: 'var(--app-surface)',
                     }}
                   >
                     <Wifi className="h-3.5 w-3.5" />
-                    Deteksi & Cetak via Serial / Bluetooth
+                    Deteksi &amp; Cetak via Serial / Bluetooth
                   </button>
                   <button
                     type="button"
+                    disabled={selectedCount === 0}
                     onClick={() => {
                       setPreviewTab('thermal');
                       handleUsbPrint();
                     }}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold cursor-pointer"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold cursor-pointer disabled:opacity-45"
                     style={{
                       borderColor: 'var(--app-border)',
                       backgroundColor: 'var(--app-surface)',
                     }}
                   >
                     <Usb className="h-3.5 w-3.5" />
-                    Deteksi & Cetak via USB Printer
+                    Deteksi &amp; Cetak via USB Printer
                   </button>
                 </div>
 
@@ -324,8 +529,9 @@ export const PrintModal: React.FC<PrintModalProps> = ({
                   <div className="overflow-x-auto">
                     <PrintableReport
                       document={document}
+                      allDocuments={allDocuments}
                       activeGh={activeGh}
-                      printScope={printScope}
+                      printSelection={printSelection}
                       previewMode
                     />
                   </div>

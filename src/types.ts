@@ -15,7 +15,7 @@ export type FontOptionId =
   | 'dmsans'
   | 'lora';
 
-export type DashboardTab = 'water' | 'treatment' | 'plants';
+export type DashboardTab = 'water' | 'treatment' | 'plants' | 'accounting';
 
 export type GrowthPhase = 'semai' | 'vegetatif' | 'generatif' | 'pembesaran';
 
@@ -25,6 +25,84 @@ export type TreatmentStatus = 'terjadwal' | 'selesai';
 
 export type PlantHealthStatus = 'sehat' | 'perhatian' | 'sakit' | 'panen' | 'kosong';
 export type FruitingStatus = 'berbuah' | 'tidak_berbuah';
+
+export type ExpenseCategory =
+  | 'pupuk'
+  | 'fungisida'
+  | 'insektisida'
+  | 'tenaga_kerja'
+  | 'lainnya';
+
+export interface ProductionExpenseEntry {
+  id: string;
+  date: string;
+  category: ExpenseCategory;
+  itemName: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  totalCost: number;
+  notes: string;
+  createdAt?: string;
+}
+
+export type SaleGrade =
+  | 'Grade A'
+  | 'Grade B'
+  | 'Grade C'
+  | 'Grade D'
+  | 'Plonco'
+  | 'Jual sendiri';
+
+export interface SaleRecord {
+  id: string;
+  date: string;
+  grade: SaleGrade;
+  weightKg: number;
+  pricePerKg: number;
+  totalAmount: number;
+  buyer: string;
+  notes: string;
+  receiptNo?: string;
+  createdAt?: string;
+}
+
+export interface SelfSalePaymentProfile {
+  storeName: string;
+  storePhone: string;
+  storeAddress: string;
+  bankName: string;
+  accountNumber: string;
+  accountHolderName: string;
+  qrisImageDataUrl: string;
+  footerNote: string;
+  updatedAt?: string;
+}
+
+export interface SelfSaleReceiptItem {
+  id: string;
+  name: string;
+  weightKg: number;
+  pricePerKg: number;
+  subtotal: number;
+}
+
+export interface SelfSaleReceipt {
+  id: string;
+  receiptNumber: string;
+  date: string;
+  saleId?: string;
+  ghName: string;
+  buyerName: string;
+  buyerPhone?: string;
+  paymentMethod: 'QRIS / Transfer' | 'QRIS' | 'Transfer Rekening' | 'Tunai';
+  items: SelfSaleReceiptItem[];
+  totalWeightKg: number;
+  totalAmount: number;
+  notes: string;
+  paperFormat: 'thermal80' | 'a4';
+  createdAt?: string;
+}
 
 export interface NotificationSettings {
   enabled: boolean;
@@ -131,11 +209,14 @@ export interface GreenhouseData {
   harvestDate?: string;
   phase: GrowthPhase;
   ecFactor: 500 | 700;
+  avgMelonWeightKg?: number;
   waterTargets?: WaterTargets;
   currentWater: WaterState;
   waterLogs: WaterLogEntry[];
   treatments: TreatmentRecord[];
   plants: PlantCondition[];
+  expenses?: ProductionExpenseEntry[];
+  sales?: SaleRecord[];
 }
 
 export interface SeasonDocument {
@@ -156,7 +237,13 @@ export interface AppAlert {
   timestamp: string;
 }
 
-export type ActivityCategory = 'water' | 'treatment' | 'plants' | 'greenhouse' | 'document';
+export type ActivityCategory =
+  | 'water'
+  | 'treatment'
+  | 'plants'
+  | 'accounting'
+  | 'greenhouse'
+  | 'document';
 
 export interface SupervisionActivity {
   id: string;
@@ -168,4 +255,13 @@ export interface SupervisionActivity {
   deviceLabel: string;
   actorEmail: string;
   createdAt: string;
+}
+
+export interface PrintSelection {
+  water: boolean;
+  treatment: boolean;
+  plants: boolean;
+  accountingExpenses: boolean;
+  accountingSales: boolean;
+  accountingProfit: boolean;
 }

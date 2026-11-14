@@ -139,6 +139,10 @@
         "ecFactor": {
           "type": "number"
         },
+        "avgMelonWeightKg": {
+          "type": "number",
+          "description": "Rata-rata berat per buah melon (kg) untuk estimasi total bobot panen."
+        },
         "waterTargets": {
           "type": "object",
           "description": "Batas target PPM dan pH kustom yang dapat diisi manual oleh pemeriksa."
@@ -451,7 +455,7 @@
         },
         "category": {
           "type": "string",
-          "enum": ["water", "treatment", "plants", "greenhouse", "document"]
+          "enum": ["water", "treatment", "plants", "accounting", "greenhouse", "document"]
         },
         "summary": {
           "type": "string",
@@ -484,12 +488,153 @@
         "actorEmail",
         "createdAt"
       ]
+    },
+    "ProductionExpenseItem": {
+      "title": "ProductionExpenseItem",
+      "description": "Catatan biaya produksi melon (Pupuk, Fungisida, Insektisida, Tenaga Kerja, Lainnya termasuk Benih & AB MIX).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "category": {
+          "type": "string",
+          "enum": ["pupuk", "fungisida", "insektisida", "tenaga_kerja", "lainnya"]
+        },
+        "itemName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string", "maxLength": 40 },
+        "unitPrice": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "date",
+        "category",
+        "itemName",
+        "quantity",
+        "unit",
+        "unitPrice",
+        "totalCost",
+        "notes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SaleItem": {
+      "title": "SaleItem",
+      "description": "Catatan penjualan melon berdasarkan grade (Grade A/B/C/D, Plonco, Jual sendiri) dalam satuan kg dan rupiah.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "date": { "type": "string", "maxLength": 32 },
+        "grade": {
+          "type": "string",
+          "enum": ["Grade A", "Grade B", "Grade C", "Grade D", "Plonco", "Jual sendiri"]
+        },
+        "weightKg": { "type": "number" },
+        "pricePerKg": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "buyer": { "type": "string", "maxLength": 160 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "receiptNo": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "date",
+        "grade",
+        "weightKg",
+        "pricePerKg",
+        "totalAmount",
+        "buyer",
+        "notes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PaymentProfile": {
+      "title": "PaymentProfile",
+      "description": "Pengaturan nota penjualan mandiri (Jual sendiri), barcode QRIS dari galeri, serta nomor rekening dan atas nama.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "storeName": { "type": "string", "maxLength": 120 },
+        "storePhone": { "type": "string", "maxLength": 40 },
+        "storeAddress": { "type": "string", "maxLength": 250 },
+        "bankName": { "type": "string", "maxLength": 80 },
+        "accountNumber": { "type": "string", "maxLength": 64 },
+        "accountHolderName": { "type": "string", "maxLength": 120 },
+        "qrisImageDataUrl": { "type": "string", "maxLength": 300000 },
+        "footerNote": { "type": "string", "maxLength": 250 },
+        "lastModifiedBy": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "storeName",
+        "storePhone",
+        "storeAddress",
+        "bankName",
+        "accountNumber",
+        "accountHolderName",
+        "qrisImageDataUrl",
+        "footerNote",
+        "lastModifiedBy",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
     "/users/{userId}/profile/{docId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "Menyimpan profil privat akun Google terverifikasi pemilik ruang kerja."
+    },
+    "/users/{userId}/paymentProfile/{docId}": {
+      "schema": { "$ref": "#/entities/PaymentProfile" },
+      "description": "Menyimpan barcode QRIS galeri, nomor rekening, atas nama, dan profil toko nota penjualan mandiri per Akun Google."
     },
     "/users/{userId}/seasons/{seasonId}": {
       "schema": { "$ref": "#/entities/SeasonMeta" },
@@ -510,6 +655,14 @@
     "/users/{userId}/seasons/{seasonId}/greenhouses/{ghId}/plantBlocks/{blockId}": {
       "schema": { "$ref": "#/entities/PlantBlock" },
       "description": "Blok 100 tanaman per dokumen untuk sinkronisasi kondisi tanaman 1–1000+ tanpa melewati batas 1MB."
+    },
+    "/users/{userId}/seasons/{seasonId}/greenhouses/{ghId}/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/ProductionExpenseItem" },
+      "description": "Catatan biaya produksi greenhouse per item (pupuk, fungisida, insektisida, tenaga kerja, benih, AB MIX)."
+    },
+    "/users/{userId}/seasons/{seasonId}/greenhouses/{ghId}/sales/{saleId}": {
+      "schema": { "$ref": "#/entities/SaleItem" },
+      "description": "Catatan penjualan buah melon per grade (kg & rupiah)."
     },
     "/users/{userId}/seasons/{seasonId}/activities/{activityId}": {
       "schema": { "$ref": "#/entities/SupervisionActivity" },

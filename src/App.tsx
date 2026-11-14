@@ -9,8 +9,11 @@ import {
   CloudSeasonMeta,
   deleteGreenhouseFromCloud,
   deleteSeasonFromCloud,
+  fetchSeasonFromCloud,
   getSavedDeviceLabel,
   saveDeviceLabel,
+  savePaymentProfileToCloud,
+  subscribePaymentProfileRealtime,
   subscribeSeasonRealtime,
   subscribeUserSeasons,
   syncGreenhouseDeltaToCloud,
@@ -23,18 +26,26 @@ import {
   DashboardTab,
   GreenhouseData,
   GrowthPhase,
+  PrintSelection,
   SeasonDocument,
+  SelfSalePaymentProfile,
+  SelfSaleReceipt,
   SupervisionActivity,
 } from './types';
 import {
   createGreenhouse,
+  DEFAULT_PAYMENT_PROFILE,
   generatePlants,
   loadDocuments,
   loadOfflineModePref,
+  loadPaymentProfile,
+  loadPendingPaymentSync,
   loadPendingSyncQueue,
   loadSettings,
   saveDocuments,
   saveOfflineModePref,
+  savePaymentProfile,
+  savePendingPaymentSync,
   savePendingSyncQueue,
   saveSettings,
 } from './utils/storage';
@@ -47,14 +58,17 @@ import { TopToolbar } from './components/TopToolbar';
 import { DashboardWaterControl } from './components/DashboardWaterControl';
 import { DashboardTreatments } from './components/DashboardTreatments';
 import { DashboardPlantsMatrix } from './components/DashboardPlantsMatrix';
+import { DashboardAccounting } from './components/DashboardAccounting';
 import { SettingsModal } from './components/SettingsModal';
 import { GreenhouseModal } from './components/GreenhouseModal';
 import { MobileApkModal } from './components/MobileApkModal';
 import { NewDocumentModal } from './components/NewDocumentModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
-import { PrintModal, PrintScope } from './components/PrintModal';
+import { PrintModal } from './components/PrintModal';
 import { PrintableReport } from './components/PrintableReport';
+import { PrintableReceipt } from './components/PrintableReceipt';
 import { AccountSyncModal } from './components/AccountSyncModal';
+import { DEFAULT_PRINT_SELECTION } from './utils/printer';
 
 function hexToSoftRgba(hex: string, alpha = 0.12): string {
   const clean = hex.replace('#', '');
@@ -82,8 +96,23 @@ export default function App() {
   const [printOpen, setPrintOpen] = useState(false);
   const [mobileApkOpen, setMobileApkOpen] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
-  const [printScope, setPrintScope] = useState<PrintScope>('all');
+  const [printSelection, setPrintSelection] = useState<PrintSelection>(DEFAULT_PRINT_SELECTION);
+  const [activePrintReceipt, setActivePrintReceipt] = useState<SelfSaleReceipt | null>(null);
   const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([]);
+
+  // Payment profile (Rekening & QRIS Galeri) + Cloud sync state
+  const [paymentProfile, setPaymentProfile] = useState<SelfSalePaymentProfile>(() =>
+    loadPaymentProfile()
+  );
+  const [pendingPaymentSync, setPendingPaymentSync] = useState<boolean>(() =>
+    loadPendingPaymentSync()
+  );
+  const paymentProfileRef = useRef(paymentProfile);
+  paymentProfileRef.current = paymentProfile;
+  const pendingPaymentSyncRef = useRef(pendingPaymentSync);
+  pendingPaymentSyncRef.current = pendingPaymentSync;
+  const paymentSyncTimerRef = useRef<number | null>(null);
+  const fetchedOtherSeasonIdsRef = useRef<Set<string>>(new Set());
 
   // Firebase Auth, Offline Mode & Real-Time Cloud Sync state
   const isBrowserOnline = useOnlineStatus();
@@ -106,7 +135,10 @@ export default function App() {
   pendingQueueRef.current = pendingQueue;
   const flushingRef = useRef(false);
 
-  const pendingSyncCount = pendingQueue.upsertIds.length + pendingQueue.deleteIds.length;
+  const pendingSyncCount =
+    pendingQueue.upsertIds.length +
+    pendingQueue.deleteIds.length +
+    (pendingPaymentSync ? 1 : 0);
 
   const activeDoc = useMemo(() => {
     return (
@@ -163,6 +195,14 @@ export default function App() {
     savePendingSyncQueue(pendingQueue.upsertIds, pendingQueue.deleteIds);
   }, [pendingQueue]);
 
+  useEffect(() => {
+    savePaymentProfile(paymentProfile);
+  }, [paymentProfile]);
+
+  useEffect(() => {
+    savePendingPaymentSync(pendingPaymentSync);
+  }, [pendingPaymentSync]);
+
   const enqueueUpsertSeason = useCallback((seasonId: string) => {
     setPendingQueue((prev) => ({
       upsertIds: prev.upsertIds.includes(seasonId) ? prev.upsertIds : [...prev.upsertIds, seasonId],
@@ -180,7 +220,8 @@ export default function App() {
   const flushPendingOfflineQueue = useCallback(async () => {
     if (!cloudUser || isEffectivelyOffline || flushingRef.current) return;
     const { upsertIds, deleteIds } = pendingQueueRef.current;
-    if (upsertIds.length === 0 && deleteIds.length === 0) return;
+    const needPaymentSync = pendingPaymentSyncRef.current;
+    if (upsertIds.length === 0 && deleteIds.length === 0 && !needPaymentSync) return;
 
     flushingRef.current = true;
     setSyncBusy(true);
@@ -200,6 +241,11 @@ export default function App() {
       for (const sId of deleteIds) {
         await deleteSeasonFromCloud(cloudUser, sId);
         doneDeletes.push(sId);
+      }
+
+      if (needPaymentSync) {
+        await savePaymentProfileToCloud(cloudUser, paymentProfileRef.current, deviceLabel);
+        setPendingPaymentSync(false);
       }
 
       setPendingQueue((prev) => ({
@@ -238,6 +284,7 @@ export default function App() {
       } else if (!user) {
         setCloudMetas([]);
         setActivities([]);
+        fetchedOtherSeasonIdsRef.current.clear();
       }
     });
     return () => unsub();
@@ -336,6 +383,117 @@ export default function App() {
     return () => unsub();
   }, [authReady, cloudUser, activeCloudMeta, isEffectivelyOffline]);
 
+  // Hydrate non-active seasons on secondary devices so Dashboard 3 period & annual charts have complete Cloud data
+  useEffect(() => {
+    if (!authReady || !cloudUser || isEffectivelyOffline || cloudMetas.length <= 1) return;
+    const otherMetas = cloudMetas.filter(
+      (m) =>
+        m.id !== activeCloudMeta?.id &&
+        !pendingQueueRef.current.upsertIds.includes(m.id) &&
+        !fetchedOtherSeasonIdsRef.current.has(m.id)
+    );
+    if (otherMetas.length === 0) return;
+
+    let cancelled = false;
+    otherMetas.forEach((m) => fetchedOtherSeasonIdsRef.current.add(m.id));
+
+    void Promise.all(
+      otherMetas.map(async (meta) => {
+        try {
+          const hydrated = await fetchSeasonFromCloud(cloudUser.uid, meta);
+          if (!hydrated || cancelled) return;
+          if (pendingQueueRef.current.upsertIds.includes(hydrated.id)) return;
+          setDocStore((prev) => ({
+            ...prev,
+            documents: prev.documents.map((d) => (d.id === hydrated.id ? hydrated : d)),
+          }));
+        } catch {
+          fetchedOtherSeasonIdsRef.current.delete(meta.id);
+        }
+      })
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, cloudUser, isEffectivelyOffline, cloudMetas, activeCloudMeta?.id]);
+
+  // Subscribe to QRIS & Bank Payment Profile across devices sharing the same Google Account
+  useEffect(() => {
+    if (!authReady || !cloudUser || isEffectivelyOffline) return;
+    const unsub = subscribePaymentProfileRealtime(cloudUser.uid, (cloudProfile) => {
+      if (cloudProfile) {
+        if (!pendingPaymentSyncRef.current) {
+          setPaymentProfile(cloudProfile);
+        }
+      } else {
+        const local = paymentProfileRef.current;
+        const hasCustomLocalData =
+          Boolean(local.bankName.trim()) ||
+          Boolean(local.accountNumber.trim()) ||
+          Boolean(local.accountHolderName.trim()) ||
+          Boolean(local.qrisImageDataUrl) ||
+          Boolean(local.storePhone.trim()) ||
+          Boolean(local.storeAddress.trim()) ||
+          local.storeName !== DEFAULT_PAYMENT_PROFILE.storeName ||
+          local.footerNote !== DEFAULT_PAYMENT_PROFILE.footerNote;
+        if (hasCustomLocalData) {
+          void savePaymentProfileToCloud(cloudUser, local, deviceLabel).catch(() => {
+            setPendingPaymentSync(true);
+          });
+        }
+      }
+    });
+    return () => unsub();
+  }, [authReady, cloudUser, isEffectivelyOffline, deviceLabel]);
+
+  const handleUpdatePaymentProfile = useCallback(
+    (next: SelfSalePaymentProfile) => {
+      const qrisChanged = next.qrisImageDataUrl !== paymentProfileRef.current.qrisImageDataUrl;
+      setPaymentProfile(next);
+
+      if (!cloudUser) return;
+      if (isEffectivelyOffline) {
+        setPendingPaymentSync(true);
+        return;
+      }
+
+      if (paymentSyncTimerRef.current !== null) {
+        window.clearTimeout(paymentSyncTimerRef.current);
+        paymentSyncTimerRef.current = null;
+      }
+
+      const push = () => {
+        void savePaymentProfileToCloud(cloudUser, next, deviceLabel)
+          .then(() => {
+            setPendingPaymentSync(false);
+          })
+          .catch(() => {
+            setPendingPaymentSync(true);
+          });
+      };
+
+      if (qrisChanged) {
+        push();
+      } else {
+        paymentSyncTimerRef.current = window.setTimeout(push, 500);
+      }
+    },
+    [cloudUser, isEffectivelyOffline, deviceLabel]
+  );
+
+  const handlePrintReceiptSheet = useCallback((receipt: SelfSaleReceipt) => {
+    setActivePrintReceipt(receipt);
+    const cleanup = () => {
+      setActivePrintReceipt(null);
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    window.setTimeout(() => {
+      window.print();
+    }, 90);
+  }, []);
+
   const handleSignInGoogle = async () => {
     if (!isBrowserOnline) {
       setSyncError('Perangkat sedang offline. Hubungkan internet terlebih dahulu untuk masuk Akun Google.');
@@ -386,7 +544,9 @@ export default function App() {
       for (const docItem of docStore.documents) {
         await uploadSeasonToCloud(cloudUser, docItem, deviceLabel);
       }
+      await savePaymentProfileToCloud(cloudUser, paymentProfileRef.current, deviceLabel);
       setPendingQueue({ upsertIds: [], deleteIds: [] });
+      setPendingPaymentSync(false);
     } catch (err) {
       setSyncError(err instanceof Error ? err.message : 'Gagal mengunggah data lokal ke Cloud.');
     } finally {
@@ -841,6 +1001,7 @@ export default function App() {
                 {activeTab === 'water' && `${activeGh.name} — Kontrol PPM & pH Larutan NFT`}
                 {activeTab === 'treatment' && `${activeGh.name} — Perawatan Penyemprotan, Pengolesan & Pengocoran`}
                 {activeTab === 'plants' && `${activeGh.name} — Pemantauan Kondisi Tanaman 1 s/d ${activeGh.capacity}`}
+                {activeTab === 'accounting' && `${activeGh.name} — Pembukuan Melon (Biaya, Penjualan & Keuntungan)`}
               </h1>
               {cloudUser && activities[0] && (
                 <button
@@ -1016,6 +1177,20 @@ export default function App() {
             onUpdateGh={updateActiveGh}
           />
         )}
+
+        {activeTab === 'accounting' && (
+          <DashboardAccounting
+            document={activeDoc}
+            allDocuments={docStore.documents}
+            gh={activeGh}
+            onUpdateGh={updateActiveGh}
+            paymentProfile={paymentProfile}
+            onUpdatePaymentProfile={handleUpdatePaymentProfile}
+            onPrintReceiptSheet={handlePrintReceiptSheet}
+            cloudEmail={cloudUser?.email || null}
+            onOpenAccountSync={() => setAccountModalOpen(true)}
+          />
+        )}
       </main>
 
       {/* Modals */}
@@ -1053,9 +1228,11 @@ export default function App() {
       <PrintModal
         isOpen={printOpen}
         document={activeDoc}
+        allDocuments={docStore.documents}
         activeGh={activeGh}
-        printScope={printScope}
-        onChangePrintScope={setPrintScope}
+        activeTab={activeTab}
+        printSelection={printSelection}
+        onChangePrintSelection={setPrintSelection}
         onClose={() => setPrintOpen(false)}
       />
 
@@ -1096,12 +1273,20 @@ export default function App() {
         onSyncNow={() => void flushPendingOfflineQueue()}
       />
 
-      {/* Dedicated A4 Print Output */}
-      <PrintableReport
-        document={activeDoc}
-        activeGh={activeGh}
-        printScope={printScope}
-      />
+      {/* Dedicated Print Output: Standalone Nota Jual Sendiri OR A4 Full Report */}
+      {activePrintReceipt ? (
+        <PrintableReceipt
+          receipt={activePrintReceipt}
+          paymentProfile={paymentProfile}
+        />
+      ) : (
+        <PrintableReport
+          document={activeDoc}
+          allDocuments={docStore.documents}
+          activeGh={activeGh}
+          printSelection={printSelection}
+        />
+      )}
     </div>
   );
 }

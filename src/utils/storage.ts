@@ -4,7 +4,10 @@ import {
   GrowthPhase,
   PlantCondition,
   PlantHealthStatus,
+  ProductionExpenseEntry,
+  SaleRecord,
   SeasonDocument,
+  SelfSalePaymentProfile,
   TreatmentRecord,
   WaterLogEntry,
 } from '../types';
@@ -204,6 +207,164 @@ function buildSampleTreatments(ghName: string): TreatmentRecord[] {
   ];
 }
 
+function buildSampleExpenses(ghName: string, variety: string): ProductionExpenseEntry[] {
+  const daysAgo = (d: number) => new Date(Date.now() - d * 86400 * 1000).toISOString().slice(0, 10);
+  const cleanTag = ghName.replace(/\s+/g, '-').toLowerCase();
+  const seedName = variety.toLowerCase().includes('inthanon')
+    ? 'Benih: Inthanon'
+    : variety.toLowerCase().includes('blues')
+    ? 'Benih: The Blues'
+    : variety.toLowerCase().includes('kirin')
+    ? 'Benih: Kirin'
+    : variety.toLowerCase().includes('honey')
+    ? 'Benih: Honey Globe'
+    : 'Benih: Petravany';
+
+  return [
+    {
+      id: `exp-1-${cleanTag}`,
+      date: daysAgo(38),
+      category: 'lainnya',
+      itemName: seedName,
+      quantity: 2,
+      unit: 'Pack',
+      unitPrice: 425000,
+      totalCost: 850000,
+      notes: 'Pembelian benih awal musim untuk 1000 lubang tanam + cadangan sulam',
+    },
+    {
+      id: `exp-2-${cleanTag}`,
+      date: daysAgo(35),
+      category: 'lainnya',
+      itemName: 'AB MIX',
+      quantity: 4,
+      unit: 'SET',
+      unitPrice: 310000,
+      totalCost: 1240000,
+      notes: 'Stok nutrisi pekatan A & B kemasan SET',
+    },
+    {
+      id: `exp-3-${cleanTag}`,
+      date: daysAgo(24),
+      category: 'pupuk',
+      itemName: 'MKP',
+      quantity: 3,
+      unit: 'kg',
+      unitPrice: 68000,
+      totalCost: 204000,
+      notes: 'Booster pembungaan & pembuahan fase generatif',
+    },
+    {
+      id: `exp-4-${cleanTag}`,
+      date: daysAgo(19),
+      category: 'pupuk',
+      itemName: 'Calcium Active',
+      quantity: 2,
+      unit: 'Liter',
+      unitPrice: 115000,
+      totalCost: 230000,
+      notes: 'Pencegahan pecah buah & penguatan tangkai',
+    },
+    {
+      id: `exp-5-${cleanTag}`,
+      date: daysAgo(15),
+      category: 'fungisida',
+      itemName: 'Antracol',
+      quantity: 2,
+      unit: 'Bungkus',
+      unitPrice: 95000,
+      totalCost: 190000,
+      notes: 'Proteksi bercak daun dan embun bulu',
+    },
+    {
+      id: `exp-6-${cleanTag}`,
+      date: daysAgo(12),
+      category: 'insektisida',
+      itemName: 'Abacel',
+      quantity: 2,
+      unit: 'Botol',
+      unitPrice: 135000,
+      totalCost: 270000,
+      notes: 'Pengendalian thrips & tungau daun',
+    },
+    {
+      id: `exp-7-${cleanTag}`,
+      date: daysAgo(10),
+      category: 'tenaga_kerja',
+      itemName: 'Tenaga Polinasi & Seleksi Buah',
+      quantity: 6,
+      unit: 'HOK',
+      unitPrice: 125000,
+      totalCost: 750000,
+      notes: '3 pekerja x 2 hari polinasi serempak',
+    },
+  ];
+}
+
+function buildSampleSales(ghName: string, phase: GrowthPhase): SaleRecord[] {
+  if (phase !== 'pembesaran' && phase !== 'generatif') return [];
+  const daysAgo = (d: number) => new Date(Date.now() - d * 86400 * 1000).toISOString().slice(0, 10);
+  const cleanTag = ghName.replace(/\s+/g, '-').toLowerCase();
+
+  if (phase === 'generatif') {
+    return [
+      {
+        id: `sale-1-${cleanTag}`,
+        date: daysAgo(3),
+        grade: 'Plonco',
+        weightKg: 35,
+        pricePerKg: 9000,
+        totalAmount: 315000,
+        buyer: 'Pedagang Lokal',
+        notes: 'Hasil seleksi buah awal (1 pohon 1 buah optimal)',
+      },
+    ];
+  }
+
+  return [
+    {
+      id: `sale-1-${cleanTag}`,
+      date: daysAgo(4),
+      grade: 'Grade A',
+      weightKg: 480,
+      pricePerKg: 28000,
+      totalAmount: 13440000,
+      buyer: 'Mitra Supermarket Segar',
+      notes: 'Panen gelombang 1 Brix 13.5–14.4%, netting penuh',
+    },
+    {
+      id: `sale-2-${cleanTag}`,
+      date: daysAgo(3),
+      grade: 'Grade B',
+      weightKg: 210,
+      pricePerKg: 22000,
+      totalAmount: 4620000,
+      buyer: 'Pasar Buah Induk',
+      notes: 'Ukuran 1.2–1.35 kg standar',
+    },
+    {
+      id: `sale-3-${cleanTag}`,
+      date: daysAgo(2),
+      grade: 'Grade C',
+      weightKg: 85,
+      pricePerKg: 16000,
+      totalAmount: 1360000,
+      buyer: 'Kios Buah Kota',
+      notes: 'Sortiran grade C',
+    },
+    {
+      id: `sale-4-${cleanTag}`,
+      date: daysAgo(1),
+      grade: 'Jual sendiri',
+      weightKg: 64,
+      pricePerKg: 32000,
+      totalAmount: 2048000,
+      buyer: 'Pembeli Kebun / Wisata Petik',
+      notes: 'Penjualan langsung pengunjung kebun',
+    },
+  ];
+}
+
 export function createGreenhouse(
   id: string,
   name: string,
@@ -227,6 +388,7 @@ export function createGreenhouse(
     harvestDate: '',
     phase,
     ecFactor,
+    avgMelonWeightKg: phase === 'pembesaran' ? 1.45 : phase === 'generatif' ? 0.55 : 1.5,
     currentWater: {
       ppm: basePpm,
       ec: Number((basePpm / ecFactor).toFixed(2)),
@@ -243,6 +405,8 @@ export function createGreenhouse(
     waterLogs: freshBlank ? [] : buildSampleWaterLogs(basePpm, basePh, ecFactor),
     treatments: freshBlank ? [] : buildSampleTreatments(name),
     plants: generatePlants(capacity, seedOffset, phase, freshBlank),
+    expenses: freshBlank ? [] : buildSampleExpenses(name, variety),
+    sales: freshBlank ? [] : buildSampleSales(name, phase),
   };
 }
 
@@ -313,8 +477,21 @@ export function loadDocuments(): { documents: SeasonDocument[]; activeDocId: str
       saveDocuments([initial], initial.id);
       return { documents: [initial], activeDocId: initial.id };
     }
-    const validActive = parsed.some((d) => d.id === activeId) ? activeId : parsed[0].id;
-    return { documents: parsed, activeDocId: validActive };
+    const normalized: SeasonDocument[] = parsed.map((doc) => ({
+      ...doc,
+      greenhouses: Array.isArray(doc.greenhouses)
+        ? doc.greenhouses.map((gh) => ({
+            ...gh,
+            waterLogs: Array.isArray(gh.waterLogs) ? gh.waterLogs : [],
+            treatments: Array.isArray(gh.treatments) ? gh.treatments : [],
+            plants: Array.isArray(gh.plants) ? gh.plants : [],
+            expenses: Array.isArray(gh.expenses) ? gh.expenses : [],
+            sales: Array.isArray(gh.sales) ? gh.sales : [],
+          }))
+        : [],
+    }));
+    const validActive = normalized.some((d) => d.id === activeId) ? activeId : normalized[0].id;
+    return { documents: normalized, activeDocId: validActive };
   } catch {
     const initial = createInitialSeasonDocument();
     return { documents: [initial], activeDocId: initial.id };
@@ -373,4 +550,57 @@ export function savePendingSyncQueue(upsertIds: string[], deleteIds: string[]): 
     // ignore storage quota errors
   }
 }
+
+const PAYMENT_PROFILE_KEY = 'melonflow_payment_profile_v1';
+const PENDING_PAYMENT_SYNC_KEY = 'melonflow_pending_payment_sync_v1';
+
+export const DEFAULT_PAYMENT_PROFILE: SelfSalePaymentProfile = {
+  storeName: 'Kebun MelonFlow NFT',
+  storePhone: '',
+  storeAddress: '',
+  bankName: '',
+  accountNumber: '',
+  accountHolderName: '',
+  qrisImageDataUrl: '',
+  footerNote: 'Terima kasih telah berbelanja melon segar kebun kami.',
+};
+
+export function loadPaymentProfile(): SelfSalePaymentProfile {
+  try {
+    const raw = localStorage.getItem(PAYMENT_PROFILE_KEY);
+    if (!raw) return DEFAULT_PAYMENT_PROFILE;
+    const parsed = JSON.parse(raw) as Partial<SelfSalePaymentProfile>;
+    return {
+      ...DEFAULT_PAYMENT_PROFILE,
+      ...parsed,
+    };
+  } catch {
+    return DEFAULT_PAYMENT_PROFILE;
+  }
+}
+
+export function savePaymentProfile(profile: SelfSalePaymentProfile): void {
+  try {
+    localStorage.setItem(PAYMENT_PROFILE_KEY, JSON.stringify(profile));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+export function loadPendingPaymentSync(): boolean {
+  try {
+    return localStorage.getItem(PENDING_PAYMENT_SYNC_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function savePendingPaymentSync(pending: boolean): void {
+  try {
+    localStorage.setItem(PENDING_PAYMENT_SYNC_KEY, pending ? 'true' : 'false');
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
 

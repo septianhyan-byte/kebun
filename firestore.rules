@@ -111,7 +111,7 @@ service cloud.firestore {
 
     function isValidGreenhouseMeta(data, seasonId) {
       return data.keys().hasAll(['id', 'ownerUid', 'seasonId', 'name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'currentWater', 'lastModifiedBy', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'ownerUid', 'seasonId', 'name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'waterTargets', 'currentWater', 'lastModifiedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'seasonId', 'name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'avgMelonWeightKg', 'waterTargets', 'currentWater', 'lastModifiedBy', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && isValidId(data.ownerUid)
         && data.ownerUid == request.auth.uid
@@ -127,6 +127,7 @@ service cloud.firestore {
         && isStringBounded(data.harvestDate, 32)
         && data.phase in ['semai', 'vegetatif', 'generatif', 'pembesaran']
         && data.ecFactor in [500, 700]
+        && (!('avgMelonWeightKg' in data) || (data.avgMelonWeightKg is number && data.avgMelonWeightKg >= 0 && data.avgMelonWeightKg <= 50))
         && (!('waterTargets' in data) || isValidWaterTargets(data.waterTargets))
         && isValidCurrentWater(data.currentWater)
         && isStringBounded(data.lastModifiedBy, 120)
@@ -201,6 +202,67 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidProductionExpenseItem(data) {
+      return data.keys().hasAll(['id', 'ownerUid', 'date', 'category', 'itemName', 'quantity', 'unit', 'unitPrice', 'totalCost', 'notes', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'date', 'category', 'itemName', 'quantity', 'unit', 'unitPrice', 'totalCost', 'notes', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && isStringBounded(data.date, 32)
+        && data.category in ['pupuk', 'fungisida', 'insektisida', 'tenaga_kerja', 'lainnya']
+        && isNonEmptyString(data.itemName, 160)
+        && data.quantity is number
+        && data.quantity >= 0
+        && isStringBounded(data.unit, 40)
+        && data.unitPrice is number
+        && data.unitPrice >= 0
+        && data.totalCost is number
+        && data.totalCost >= 0
+        && isStringBounded(data.notes, 500)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSaleItem(data) {
+      return data.keys().hasAll(['id', 'ownerUid', 'date', 'grade', 'weightKg', 'pricePerKg', 'totalAmount', 'buyer', 'notes', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'date', 'grade', 'weightKg', 'pricePerKg', 'totalAmount', 'buyer', 'notes', 'receiptNo', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && isStringBounded(data.date, 32)
+        && data.grade in ['Grade A', 'Grade B', 'Grade C', 'Grade D', 'Plonco', 'Jual sendiri']
+        && data.weightKg is number
+        && data.weightKg >= 0
+        && data.pricePerKg is number
+        && data.pricePerKg >= 0
+        && data.totalAmount is number
+        && data.totalAmount >= 0
+        && isStringBounded(data.buyer, 160)
+        && isStringBounded(data.notes, 500)
+        && (!('receiptNo' in data) || isStringBounded(data.receiptNo, 64))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPaymentProfile(data) {
+      return data.keys().hasAll(['id', 'ownerUid', 'storeName', 'storePhone', 'storeAddress', 'bankName', 'accountNumber', 'accountHolderName', 'qrisImageDataUrl', 'footerNote', 'lastModifiedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'storeName', 'storePhone', 'storeAddress', 'bankName', 'accountNumber', 'accountHolderName', 'qrisImageDataUrl', 'footerNote', 'lastModifiedBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && isStringBounded(data.storeName, 120)
+        && isStringBounded(data.storePhone, 40)
+        && isStringBounded(data.storeAddress, 250)
+        && isStringBounded(data.bankName, 80)
+        && isStringBounded(data.accountNumber, 64)
+        && isStringBounded(data.accountHolderName, 120)
+        && isStringBounded(data.qrisImageDataUrl, 300000)
+        && isStringBounded(data.footerNote, 250)
+        && isStringBounded(data.lastModifiedBy, 120)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidSupervisionActivity(data, seasonId) {
       return data.keys().hasAll(['id', 'ownerUid', 'seasonId', 'ghId', 'ghName', 'category', 'summary', 'deviceLabel', 'actorEmail', 'createdAt'])
         && data.keys().hasOnly(['id', 'ownerUid', 'seasonId', 'ghId', 'ghName', 'category', 'summary', 'deviceLabel', 'actorEmail', 'createdAt'])
@@ -210,7 +272,7 @@ service cloud.firestore {
         && data.seasonId == seasonId
         && isValidId(data.ghId)
         && isStringBounded(data.ghName, 80)
-        && data.category in ['water', 'treatment', 'plants', 'greenhouse', 'document']
+        && data.category in ['water', 'treatment', 'plants', 'accounting', 'greenhouse', 'document']
         && isNonEmptyString(data.summary, 300)
         && isNonEmptyString(data.deviceLabel, 120)
         && isStringBounded(data.actorEmail, 200)
@@ -231,7 +293,7 @@ service cloud.firestore {
     // User Profile (PII isolated to owner)
     // ====================
     match /users/{userId}/profile/{docId} {
-      allow get: if isOwner(userId) && isValidId(docId) && existing().ownerUid == request.auth.uid;
+      allow get: if isOwner(userId) && isValidId(docId) && (resource == null || existing().ownerUid == request.auth.uid);
       allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
       allow create: if isOwner(userId)
         && isValidId(docId)
@@ -246,6 +308,30 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'photoURL', 'updatedAt']);
+      allow delete: if isOwner(userId) && isValidId(docId) && existing().ownerUid == request.auth.uid;
+    }
+
+    // ====================
+    // Payment Profile (QRIS & Rekening untuk Nota Jual Sendiri)
+    // ====================
+    match /users/{userId}/paymentProfile/{docId} {
+      allow get: if isOwner(userId) && isValidId(docId) && (resource == null || existing().ownerUid == request.auth.uid);
+      allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+      allow create: if isOwner(userId)
+        && isValidId(docId)
+        && isValidPaymentProfile(incoming())
+        && incoming().id == docId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(docId)
+        && isValidPaymentProfile(incoming())
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['storeName', 'storePhone', 'storeAddress', 'bankName', 'accountNumber', 'accountHolderName', 'qrisImageDataUrl', 'footerNote', 'lastModifiedBy', 'updatedAt']);
       allow delete: if isOwner(userId) && isValidId(docId) && existing().ownerUid == request.auth.uid;
     }
 
@@ -303,7 +389,8 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly(['currentWater', 'lastModifiedBy', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly(['harvestDate', 'lastModifiedBy', 'updatedAt'])
             || incoming().diff(existing()).affectedKeys().hasOnly(['waterTargets', 'lastModifiedBy', 'updatedAt'])
-            || incoming().diff(existing()).affectedKeys().hasOnly(['name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'waterTargets', 'currentWater', 'lastModifiedBy', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['avgMelonWeightKg', 'lastModifiedBy', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['name', 'variety', 'capacity', 'gulliesCount', 'reservoirLiters', 'plantingDate', 'harvestDate', 'phase', 'ecFactor', 'avgMelonWeightKg', 'waterTargets', 'currentWater', 'lastModifiedBy', 'updatedAt'])
           );
         allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && existing().ownerUid == request.auth.uid;
 
@@ -395,6 +482,64 @@ service cloud.firestore {
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly(['startId', 'endId', 'plants', 'lastModifiedBy', 'updatedAt']);
           allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(blockId) && existing().ownerUid == request.auth.uid;
+        }
+
+        // ====================
+        // Production Expenses Subcollection
+        // ====================
+        match /expenses/{expenseId} {
+          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(expenseId) && existing().ownerUid == request.auth.uid;
+          allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+          allow create: if isOwner(userId)
+            && isValidId(seasonId)
+            && isValidId(ghId)
+            && isValidId(expenseId)
+            && isValidProductionExpenseItem(incoming())
+            && incoming().id == expenseId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && greenhouseExistsOrCreated(userId, seasonId, ghId);
+          allow update: if isOwner(userId)
+            && isValidId(seasonId)
+            && isValidId(ghId)
+            && isValidId(expenseId)
+            && isValidProductionExpenseItem(incoming())
+            && existing().ownerUid == request.auth.uid
+            && incoming().ownerUid == existing().ownerUid
+            && incoming().id == existing().id
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly(['date', 'category', 'itemName', 'quantity', 'unit', 'unitPrice', 'totalCost', 'notes', 'updatedAt']);
+          allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(expenseId) && existing().ownerUid == request.auth.uid;
+        }
+
+        // ====================
+        // Sales Subcollection
+        // ====================
+        match /sales/{saleId} {
+          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(saleId) && existing().ownerUid == request.auth.uid;
+          allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
+          allow create: if isOwner(userId)
+            && isValidId(seasonId)
+            && isValidId(ghId)
+            && isValidId(saleId)
+            && isValidSaleItem(incoming())
+            && incoming().id == saleId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time
+            && greenhouseExistsOrCreated(userId, seasonId, ghId);
+          allow update: if isOwner(userId)
+            && isValidId(seasonId)
+            && isValidId(ghId)
+            && isValidId(saleId)
+            && isValidSaleItem(incoming())
+            && existing().ownerUid == request.auth.uid
+            && incoming().ownerUid == existing().ownerUid
+            && incoming().id == existing().id
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly(['date', 'grade', 'weightKg', 'pricePerKg', 'totalAmount', 'buyer', 'notes', 'receiptNo', 'updatedAt']);
+          allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(saleId) && existing().ownerUid == request.auth.uid;
         }
       }
 

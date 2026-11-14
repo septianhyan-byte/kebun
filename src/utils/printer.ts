@@ -1,11 +1,32 @@
-import { GreenhouseData, SeasonDocument } from '../types';
-import { GROWTH_PHASE_SPECS, TREATMENT_TYPE_LABELS } from '../constants/themes';
+import {
+  ExpenseCategory,
+  GreenhouseData,
+  PrintSelection,
+  SeasonDocument,
+  SelfSalePaymentProfile,
+  SelfSaleReceipt,
+} from '../types';
+import {
+  EXPENSE_CATEGORY_META,
+  GROWTH_PHASE_SPECS,
+  SALE_GRADE_OPTIONS,
+  TREATMENT_TYPE_LABELS,
+} from '../constants/themes';
 
 export interface PrinterConnectionResult {
   success: boolean;
   printerName?: string;
   message: string;
 }
+
+export const DEFAULT_PRINT_SELECTION: PrintSelection = {
+  water: true,
+  treatment: true,
+  plants: true,
+  accountingExpenses: true,
+  accountingSales: true,
+  accountingProfit: true,
+};
 
 export function getPrinterCapabilities() {
   const nav = navigator as unknown as {
@@ -19,7 +40,16 @@ export function getPrinterCapabilities() {
   };
 }
 
-export function formatEscPosReport(doc: SeasonDocument, gh: GreenhouseData): string {
+function fmtRpShort(val: number): string {
+  const prefix = val < 0 ? '-Rp ' : 'Rp ';
+  return `${prefix}${Math.round(Math.abs(val)).toLocaleString('id-ID')}`;
+}
+
+export function formatEscPosReport(
+  doc: SeasonDocument,
+  gh: GreenhouseData,
+  selection: PrintSelection = DEFAULT_PRINT_SELECTION
+): string {
   const phaseSpec = GROWTH_PHASE_SPECS[gh.phase];
   const healthy = gh.plants.filter((p) => p.status === 'sehat').length;
   const attention = gh.plants.filter((p) => p.status === 'perhatian').length;
@@ -29,10 +59,35 @@ export function formatEscPosReport(doc: SeasonDocument, gh: GreenhouseData): str
     p.fruitingStatus ? p.fruitingStatus === 'berbuah' : p.fruitCount > 0
   ).length;
   const notFruiting = gh.plants.length - fruiting;
+
+  // Weight metrics
+  let sampledCount = 0;
+  let totalSampleKg = 0;
+  let totalFruits = 0;
+  for (const p of gh.plants) {
+    if (p.status === 'kosong') continue;
+    if (p.estWeightKg > 0) {
+      sampledCount += 1;
+      totalSampleKg += p.estWeightKg;
+    }
+    const isFruit = p.fruitingStatus ? p.fruitingStatus === 'berbuah' : p.fruitCount > 0;
+    if (isFruit) {
+      totalFruits += Math.max(1, p.fruitCount || 0);
+    }
+  }
+  const sampleAvgKg = sampledCount > 0 ? totalSampleKg / sampledCount : 0;
+  const effAvgKg =
+    typeof gh.avgMelonWeightKg === 'number' && !Number.isNaN(gh.avgMelonWeightKg)
+      ? gh.avgMelonWeightKg
+      : sampleAvgKg > 0
+      ? Number(sampleAvgKg.toFixed(2))
+      : 1.5;
+  const estTotalWeightKg = totalFruits * effAvgKg;
+
   const latestLog = gh.waterLogs[0];
   const pendingTreatments = gh.treatments.filter((t) => t.status === 'terjadwal');
 
-  const lines = [
+  const lines: string[] = [
     '================================',
     '     MELONFLOW NFT REPORT       ',
     '================================',
@@ -42,35 +97,161 @@ export function formatEscPosReport(doc: SeasonDocument, gh: GreenhouseData): str
     `Panen   : ${gh.harvestDate || 'Belum diisi'}`,
     `Fase    : ${phaseSpec.label}`,
     `Cetak   : ${new Date().toLocaleString('id-ID')}`,
-    '--------------------------------',
-    '[1] KONTROL NUTRISI & AIR',
-    `PPM     : ${latestLog?.ppmBefore ?? gh.currentWater.ppm} -> ${gh.currentWater.ppm} ppm`,
-    `EC      : ${gh.currentWater.ec.toFixed(2)} mS/cm`,
-    `pH Air  : ${(latestLog?.phBefore ?? gh.currentWater.ph).toFixed(2)} -> ${gh.currentWater.ph.toFixed(2)}`,
-    `Suhu    : ${gh.currentWater.tempC.toFixed(1)} C`,
-    `Tandon  : ${gh.currentWater.reservoirPct}% (${gh.reservoirLiters}L)`,
-    '--------------------------------',
-    '[2] PERAWATAN TERJADWAL',
-    ...(pendingTreatments.length === 0
-      ? ['Tidak ada jadwal tertunda']
-      : pendingTreatments.slice(0, 5).map(
-          (t) =>
-            `- ${TREATMENT_TYPE_LABELS[t.type].short}${
-              t.type === 'penyemprotan' && t.sprayCategory ? ` (${t.sprayCategory})` : ''
-            }: ${t.medicineName} (${t.dosage}) -> ${t.targetPlants}`
-        )),
-    '--------------------------------',
-    `[3] KONDISI TANAMAN (1-${gh.capacity})`,
-    `Sehat       : ${healthy}`,
-    `Perhatian   : ${attention}`,
-    `Sakit       : ${sick}`,
-    `Panen       : ${harvest}`,
-    `Berbuah     : ${fruiting}`,
-    `Tdk Berbuah : ${notFruiting}`,
-    '================================',
-    '\n\n\n',
   ];
 
+  if (selection.water) {
+    lines.push(
+      '--------------------------------',
+      '[1] KONTROL NUTRISI & AIR',
+      `PPM     : ${latestLog?.ppmBefore ?? gh.currentWater.ppm} -> ${gh.currentWater.ppm} ppm`,
+      `EC      : ${gh.currentWater.ec.toFixed(2)} mS/cm`,
+      `pH Air  : ${(latestLog?.phBefore ?? gh.currentWater.ph).toFixed(2)} -> ${gh.currentWater.ph.toFixed(2)}`,
+      `Suhu    : ${gh.currentWater.tempC.toFixed(1)} C`,
+      `Tandon  : ${gh.currentWater.reservoirPct}% (${gh.reservoirLiters}L)`
+    );
+  }
+
+  if (selection.treatment) {
+    lines.push(
+      '--------------------------------',
+      '[2] PERAWATAN TERJADWAL',
+      ...(pendingTreatments.length === 0
+        ? ['Tidak ada jadwal tertunda']
+        : pendingTreatments.slice(0, 5).map(
+            (t) =>
+              `- ${TREATMENT_TYPE_LABELS[t.type].short}${
+                t.type === 'penyemprotan' && t.sprayCategory ? ` (${t.sprayCategory})` : ''
+              }: ${t.medicineName} (${t.dosage}) -> ${t.targetPlants}`
+          ))
+    );
+  }
+
+  if (selection.plants) {
+    lines.push(
+      '--------------------------------',
+      `[3] KONDISI TANAMAN (1-${gh.capacity})`,
+      `Sehat       : ${healthy}`,
+      `Perhatian   : ${attention}`,
+      `Sakit       : ${sick}`,
+      `Panen       : ${harvest}`,
+      `Berbuah     : ${fruiting}`,
+      `Tdk Berbuah : ${notFruiting}`,
+      `Rata2 Berat : ${effAvgKg.toFixed(2)} kg/buah`,
+      `Est. Panen  : ${estTotalWeightKg.toFixed(1)} kg (${totalFruits} buah)`
+    );
+  }
+
+  const expenses = gh.expenses || [];
+  const sales = gh.sales || [];
+  const totalExp = expenses.reduce((s, e) => s + (e.totalCost || 0), 0);
+  const totalSale = sales.reduce((s, x) => s + (x.totalAmount || 0), 0);
+  const totalSaleKg = sales.reduce((s, x) => s + (x.weightKg || 0), 0);
+
+  if (selection.accountingExpenses) {
+    lines.push('--------------------------------', '[4A] BIAYA PRODUKSI');
+    (Object.keys(EXPENSE_CATEGORY_META) as ExpenseCategory[]).forEach((cat) => {
+      const catSum = expenses
+        .filter((e) => e.category === cat)
+        .reduce((s, e) => s + (e.totalCost || 0), 0);
+      lines.push(`${EXPENSE_CATEGORY_META[cat].short.padEnd(12)}: ${fmtRpShort(catSum)}`);
+    });
+    lines.push(`TOTAL BIAYA : ${fmtRpShort(totalExp)}`);
+  }
+
+  if (selection.accountingSales) {
+    lines.push('--------------------------------', '[4B] PENJUALAN MELON');
+    SALE_GRADE_OPTIONS.forEach((opt) => {
+      const items = sales.filter((s) => s.grade === opt.grade);
+      const kg = items.reduce((s, x) => s + (x.weightKg || 0), 0);
+      const rp = items.reduce((s, x) => s + (x.totalAmount || 0), 0);
+      if (kg > 0 || rp > 0) {
+        lines.push(`${opt.grade.padEnd(12)}: ${kg.toFixed(1)}kg = ${fmtRpShort(rp)}`);
+      }
+    });
+    lines.push(`TOTAL BERAT : ${totalSaleKg.toFixed(1)} kg`);
+    lines.push(`TOTAL UANG  : ${fmtRpShort(totalSale)}`);
+  }
+
+  if (selection.accountingProfit) {
+    const net = totalSale - totalExp;
+    const seasonExp = doc.greenhouses.reduce(
+      (a, g) => a + (g.expenses || []).reduce((x, e) => x + (e.totalCost || 0), 0),
+      0
+    );
+    const seasonSale = doc.greenhouses.reduce(
+      (a, g) => a + (g.sales || []).reduce((x, s) => x + (s.totalAmount || 0), 0),
+      0
+    );
+    lines.push(
+      '--------------------------------',
+      '[4C] KEUNTUNGAN PEMBUKUAN',
+      `Penjualan GH : ${fmtRpShort(totalSale)}`,
+      `Biaya GH     : ${fmtRpShort(totalExp)}`,
+      `Laba/Rugi GH : ${fmtRpShort(net)}`,
+      `Laba Semua GH: ${fmtRpShort(seasonSale - seasonExp)}`
+    );
+  }
+
+  lines.push('================================', '\n\n\n');
+  return lines.join('\n');
+}
+
+export function formatEscPosSelfSaleReceipt(
+  receipt: SelfSaleReceipt,
+  profile: SelfSalePaymentProfile
+): string {
+  const lines: string[] = [
+    '================================',
+    (profile.storeName || 'MELONFLOW NFT').toUpperCase().slice(0, 32),
+    ...(profile.storeAddress ? [profile.storeAddress.slice(0, 32)] : []),
+    ...(profile.storePhone ? [`Telp/WA: ${profile.storePhone}`] : []),
+    '================================',
+    `No Nota : ${receipt.receiptNumber}`,
+    `Tanggal : ${receipt.date}`,
+    `GH      : ${receipt.ghName}`,
+    `Pembeli : ${receipt.buyerName || 'Pelanggan Langsung'}`,
+    `Bayar   : ${receipt.paymentMethod}`,
+    '--------------------------------',
+  ];
+
+  for (const item of receipt.items) {
+    lines.push(item.name.slice(0, 32));
+    lines.push(
+      `  ${item.weightKg.toLocaleString('id-ID')} kg x ${fmtRpShort(item.pricePerKg)} = ${fmtRpShort(item.subtotal)}`
+    );
+  }
+
+  lines.push(
+    '--------------------------------',
+    `TOTAL BERAT : ${receipt.totalWeightKg.toLocaleString('id-ID')} kg`,
+    `TOTAL BAYAR : ${fmtRpShort(receipt.totalAmount)}`
+  );
+
+  if (receipt.notes) {
+    lines.push(`Catatan     : ${receipt.notes.slice(0, 60)}`);
+  }
+
+  const hasBank =
+    profile.bankName.trim() ||
+    profile.accountNumber.trim() ||
+    profile.accountHolderName.trim();
+
+  if (hasBank || profile.qrisImageDataUrl) {
+    lines.push('--------------------------------', 'INFO PEMBAYARAN:');
+    if (profile.bankName.trim()) lines.push(`Bank   : ${profile.bankName.trim()}`);
+    if (profile.accountNumber.trim()) lines.push(`No Rek : ${profile.accountNumber.trim()}`);
+    if (profile.accountHolderName.trim()) lines.push(`A/N    : ${profile.accountHolderName.trim()}`);
+    if (profile.qrisImageDataUrl) {
+      lines.push('QRIS   : Tersedia (cetak PDF/layar untuk scan barcode)');
+    }
+  }
+
+  lines.push(
+    '--------------------------------',
+    (profile.footerNote || 'Terima kasih!').slice(0, 32),
+    '================================',
+    '\n\n\n'
+  );
   return lines.join('\n');
 }
 

@@ -91,16 +91,17 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
           </span>
         </div>
 
-        {/* Desktop Navigation Zone: 3 Dashboards */}
+        {/* Desktop Navigation Zone: 4 Dashboards */}
         <nav
           aria-label="Navigasi Dashboard"
-          className="hidden xl:flex items-center gap-6"
+          className="hidden xl:flex items-center gap-5"
         >
           {(
             [
               { id: 'water', label: '1. Kontrol PPM & pH' },
               { id: 'treatment', label: '2. Perawatan Obat' },
               { id: 'plants', label: '3. Kondisi 1–1000' },
+              { id: 'accounting', label: '4. Pembukuan Melon' },
             ] as Array<{ id: DashboardTab; label: string }>
           ).map((tab) => {
             const isActive = activeTab === tab.id;
@@ -412,14 +413,15 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
 
       {/* Mobile & Tablet Dashboard Tabs (hidden on xl+) */}
       <div
-        className="grid grid-cols-3 xl:hidden border-t px-2 sm:px-6 sm:flex sm:gap-6"
+        className="grid grid-cols-4 xl:hidden border-t px-1.5 sm:px-6 sm:flex sm:gap-6"
         style={{ borderColor: 'var(--app-border)' }}
       >
         {(
           [
-            { id: 'water', shortLabel: '1. PPM & pH', tabletLabel: '1. Kontrol PPM & pH' },
+            { id: 'water', shortLabel: '1. PPM/pH', tabletLabel: '1. Kontrol PPM & pH' },
             { id: 'treatment', shortLabel: '2. Obat', tabletLabel: '2. Perawatan Obat' },
             { id: 'plants', shortLabel: '3. 1–1000', tabletLabel: '3. Kondisi 1–1000' },
+            { id: 'accounting', shortLabel: '4. Pembukuan', tabletLabel: '4. Pembukuan Melon' },
           ] as Array<{ id: DashboardTab; shortLabel: string; tabletLabel: string }>
         ).map((tab) => {
           const isActive = activeTab === tab.id;
@@ -428,7 +430,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({
               key={tab.id}
               type="button"
               onClick={() => onSelectTab(tab.id)}
-              className="relative py-2.5 text-center sm:text-left text-xs sm:text-sm font-semibold whitespace-nowrap cursor-pointer"
+              className="relative py-2.5 text-center sm:text-left text-[11px] sm:text-sm font-semibold whitespace-nowrap cursor-pointer"
               style={{
                 color: isActive ? 'var(--app-accent)' : 'var(--app-text-muted)',
               }}

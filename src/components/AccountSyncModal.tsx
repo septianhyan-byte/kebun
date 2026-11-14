@@ -45,6 +45,7 @@ const CATEGORY_LABELS: Record<SupervisionActivity['category'], string> = {
   water: 'PPM & pH',
   treatment: 'Perawatan',
   plants: 'Tanaman',
+  accounting: 'Pembukuan',
   greenhouse: 'Greenhouse',
   document: 'Dokumen',
 };
@@ -205,7 +206,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
                     <span>Saat Ini Mode Lokal (Belum Terhubung Cloud)</span>
                   </div>
                   <p className="text-xs leading-relaxed" style={{ color: 'var(--app-text-muted)' }}>
-                    Masuk dengan Akun Google agar data GH 1, GH 2, PPM/pH, perawatan obat, dan kondisi 1–1000 tanaman langsung sinkron antar semua perangkat yang memakai akun yang sama.
+                    Masuk dengan Akun Google agar data GH 1, GH 2, PPM/pH, perawatan obat, kondisi 1–1000 tanaman, serta pembukuan, QRIS, &amp; nomor rekening nota langsung sinkron antar semua perangkat yang memakai akun yang sama.
                   </p>
                 </div>
 
@@ -365,7 +366,7 @@ export const AccountSyncModal: React.FC<AccountSyncModalProps> = ({
                   <span>Sinkronisasi Dokumen Musim Tanam ({localDocCount} dokumen)</span>
                 </div>
                 <p className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
-                  Setiap perubahan di GH, PPM/pH, Obat, & Tanaman tersimpan otomatis ke Cloud. Gunakan tombol di samping jika ingin mengunggah ulang seluruh dokumen lokal ke Cloud.
+                  Setiap perubahan di GH, PPM/pH, Obat, Tanaman, Pembukuan, serta QRIS &amp; Rekening Nota tersimpan otomatis ke Cloud. Gunakan tombol di samping jika ingin mengunggah ulang seluruh data lokal ke Cloud.
                 </p>
               </div>
               <button
