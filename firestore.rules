@@ -339,7 +339,7 @@ service cloud.firestore {
     // Seasons Workspace (Shared across devices signed into the same Google account)
     // ====================
     match /users/{userId}/seasons/{seasonId} {
-      allow get: if isOwner(userId) && isValidId(seasonId) && existing().ownerUid == request.auth.uid;
+      allow get: if isOwner(userId) && isValidId(seasonId) && (resource == null || existing().ownerUid == request.auth.uid);
       allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
       allow create: if isOwner(userId)
         && isValidId(seasonId)
@@ -365,7 +365,7 @@ service cloud.firestore {
       // Greenhouses Subcollection
       // ====================
       match /greenhouses/{ghId} {
-        allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && existing().ownerUid == request.auth.uid;
+        allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && (resource == null || existing().ownerUid == request.auth.uid);
         allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
         allow create: if isOwner(userId)
           && isValidId(seasonId)
@@ -398,7 +398,7 @@ service cloud.firestore {
         // Water Logs Subcollection
         // ====================
         match /waterLogs/{logId} {
-          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(logId) && existing().ownerUid == request.auth.uid;
+          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(logId) && (resource == null || existing().ownerUid == request.auth.uid);
           allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
           allow create: if isOwner(userId)
             && isValidId(seasonId)
@@ -427,7 +427,7 @@ service cloud.firestore {
         // Treatments Subcollection
         // ====================
         match /treatments/{treatmentId} {
-          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(treatmentId) && existing().ownerUid == request.auth.uid;
+          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(treatmentId) && (resource == null || existing().ownerUid == request.auth.uid);
           allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
           allow create: if isOwner(userId)
             && isValidId(seasonId)
@@ -459,7 +459,7 @@ service cloud.firestore {
         // Plant Blocks Subcollection (100 plants per block)
         // ====================
         match /plantBlocks/{blockId} {
-          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(blockId) && existing().ownerUid == request.auth.uid;
+          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(blockId) && (resource == null || existing().ownerUid == request.auth.uid);
           allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
           allow create: if isOwner(userId)
             && isValidId(seasonId)
@@ -488,7 +488,7 @@ service cloud.firestore {
         // Production Expenses Subcollection
         // ====================
         match /expenses/{expenseId} {
-          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(expenseId) && existing().ownerUid == request.auth.uid;
+          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(expenseId) && (resource == null || existing().ownerUid == request.auth.uid);
           allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
           allow create: if isOwner(userId)
             && isValidId(seasonId)
@@ -517,7 +517,7 @@ service cloud.firestore {
         // Sales Subcollection
         // ====================
         match /sales/{saleId} {
-          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(saleId) && existing().ownerUid == request.auth.uid;
+          allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(saleId) && (resource == null || existing().ownerUid == request.auth.uid);
           allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
           allow create: if isOwner(userId)
             && isValidId(seasonId)
@@ -547,7 +547,7 @@ service cloud.firestore {
       // Supervision Activities (Append-Only Audit Feed)
       // ====================
       match /activities/{activityId} {
-        allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(activityId) && existing().ownerUid == request.auth.uid;
+        allow get: if isOwner(userId) && isValidId(seasonId) && isValidId(activityId) && (resource == null || existing().ownerUid == request.auth.uid);
         allow list: if isOwner(userId) && resource.data.ownerUid == request.auth.uid;
         allow create: if isOwner(userId)
           && isValidId(seasonId)
