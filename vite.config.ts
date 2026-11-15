@@ -4,8 +4,13 @@ import path from 'path';
 import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+const rawBase = (process.env.VITE_BASE_PATH || '/').trim();
+const basePath = rawBase === '/' || rawBase === ''
+  ? '/'
+  : `/${rawBase.replace(/^\/+|\/+$/g, '')}/`;
+
 const pwaManifestObj = {
-  id: '/',
+  id: basePath,
   name: 'MelonFlow NFT — Kontrol Melon Hidroponik',
   short_name: 'MelonFlow',
   description:
@@ -17,25 +22,25 @@ const pwaManifestObj = {
   display: 'standalone' as const,
   display_override: ['standalone', 'minimal-ui'] as ('standalone' | 'minimal-ui')[],
   orientation: 'any' as const,
-  start_url: '/',
-  scope: '/',
+  start_url: basePath,
+  scope: basePath,
   prefer_related_applications: false,
   categories: ['productivity', 'utilities'],
   icons: [
     {
-      src: '/pwa-192x192.png',
+      src: `${basePath}pwa-192x192.png`,
       sizes: '192x192',
       type: 'image/png',
       purpose: 'any',
     },
     {
-      src: '/pwa-512x512.png',
+      src: `${basePath}pwa-512x512.png`,
       sizes: '512x512',
       type: 'image/png',
       purpose: 'any',
     },
     {
-      src: '/pwa-maskable-512x512.png',
+      src: `${basePath}pwa-maskable-512x512.png`,
       sizes: '512x512',
       type: 'image/png',
       purpose: 'maskable',
@@ -49,7 +54,8 @@ function manifestCorsHeadersPlugin(): Plugin {
     res: { setHeader: (k: string, v: string) => void },
     next: () => void
   ) => {
-    if (req.url === '/manifest.webmanifest' || req.url === '/manifest.json') {
+    const cleanUrl = (req.url || '').split('?')[0];
+    if (cleanUrl.endsWith('/manifest.webmanifest') || cleanUrl.endsWith('/manifest.json')) {
       res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Cache-Control', 'no-cache');
@@ -70,6 +76,7 @@ function manifestCorsHeadersPlugin(): Plugin {
 
 export default defineConfig(() => {
   return {
+    base: basePath,
     plugins: [
       react(),
       tailwindcss(),
@@ -92,7 +99,7 @@ export default defineConfig(() => {
           cleanupOutdatedCaches: true,
           clientsClaim: true,
           skipWaiting: true,
-          navigateFallback: '/index.html',
+          navigateFallback: `${basePath}index.html`,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,json,webmanifest}'],
           navigateFallbackDenylist: [/^\/__/, /^\/api/],
           runtimeCaching: [

@@ -100,10 +100,15 @@ export async function downloadAndroidApkBuildKit(appOrigin: string): Promise<voi
   const encoder = new TextEncoder();
   const cleanOrigin = appOrigin.replace(/\/+$/, '');
   let hostname = 'melonflow.local';
+  let startPath = '/';
   try {
-    hostname = new URL(cleanOrigin).hostname;
+    const parsedUrl = new URL(cleanOrigin);
+    hostname = parsedUrl.hostname;
+    const rawPath = parsedUrl.pathname || '/';
+    startPath = rawPath.endsWith('/') ? rawPath : `${rawPath}/`;
   } catch {
     hostname = 'melonflow.local';
+    startPath = '/';
   }
 
   const capacitorConfig = {
@@ -128,7 +133,7 @@ export async function downloadAndroidApkBuildKit(appOrigin: string): Promise<voi
     themeColor: '#15803d',
     navigationColor: '#15803d',
     backgroundColor: '#f7f9f7',
-    startUrl: '/',
+    startUrl: startPath,
     iconUrl: `${cleanOrigin}/pwa-512x512.png`,
     maskableIconUrl: `${cleanOrigin}/pwa-maskable-512x512.png`,
     webManifestUrl: `${cleanOrigin}/manifest.webmanifest`,
@@ -158,15 +163,15 @@ export async function downloadAndroidApkBuildKit(appOrigin: string): Promise<voi
   };
 
   const webManifest = {
-    id: '/',
+    id: startPath,
     name: 'MelonFlow NFT — Kontrol Melon Hidroponik',
     short_name: 'MelonFlow',
     description:
       'Aplikasi kontrol budidaya melon hidroponik sistem NFT: PPM & pH air, perawatan obat, serta pemetaan kondisi 1–1000 tanaman.',
     lang: 'id',
     dir: 'ltr',
-    start_url: '/',
-    scope: '/',
+    start_url: startPath,
+    scope: startPath,
     display: 'standalone',
     display_override: ['standalone', 'minimal-ui'],
     orientation: 'any',
@@ -250,7 +255,8 @@ PENTING JIKA MUNCUL PESAN ERROR DI PWABUILDER:
 
   // Fetch PNG icon if available so package includes app icon asset
   try {
-    const iconResp = await fetch('/pwa-512x512.png');
+    const base = import.meta.env.BASE_URL || '/';
+    const iconResp = await fetch(`${base}pwa-512x512.png`);
     if (iconResp.ok) {
       const iconBuf = new Uint8Array(await iconResp.arrayBuffer());
       entries.push({ name: 'assets/icon-512x512.png', content: iconBuf });

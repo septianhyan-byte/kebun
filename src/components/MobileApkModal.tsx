@@ -37,7 +37,11 @@ export const MobileApkModal: React.FC<MobileApkModalProps> = ({ isOpen, onClose 
   const [downloadingKit, setDownloadingKit] = useState(false);
   const [downloadMsg, setDownloadMsg] = useState('');
 
-  const originUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const basePath = import.meta.env.BASE_URL || '/';
+  const originUrl =
+    typeof window !== 'undefined'
+      ? new URL(basePath, window.location.origin).href.replace(/\/+$/, '')
+      : '';
   const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
   const isPrivateDevHost =
     hostname.startsWith('ais-dev-') ||
@@ -60,7 +64,7 @@ export const MobileApkModal: React.FC<MobileApkModalProps> = ({ isOpen, onClose 
     setDiag((prev) => ({ ...prev, status: 'checking' }));
     try {
       const linkTag = document.querySelector('link[rel="manifest"]');
-      const manifestHref = linkTag?.getAttribute('href') || '/manifest.webmanifest';
+      const manifestHref = linkTag?.getAttribute('href') || `${basePath}manifest.webmanifest`;
       const resp = await fetch(manifestHref, { cache: 'no-store' });
       const data = resp.ok ? ((await resp.json()) as { name?: string; icons?: unknown[] }) : null;
       const regs =
@@ -130,7 +134,7 @@ export const MobileApkModal: React.FC<MobileApkModalProps> = ({ isOpen, onClose 
 
   const handleDownloadManifestJson = async () => {
     try {
-      const resp = await fetch('/manifest.webmanifest', { cache: 'no-store' });
+      const resp = await fetch(`${basePath}manifest.webmanifest`, { cache: 'no-store' });
       const text = resp.ok ? await resp.text() : JSON.stringify({}, null, 2);
       const blob = new Blob([text], { type: 'application/manifest+json' });
       const url = URL.createObjectURL(blob);
