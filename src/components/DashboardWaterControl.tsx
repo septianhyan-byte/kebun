@@ -12,6 +12,7 @@ import {
   Power,
   RotateCcw,
   SlidersHorizontal,
+  Sprout,
   Thermometer,
   Trash2,
   Waves,
@@ -19,11 +20,31 @@ import {
 import { GROWTH_PHASE_SPECS } from '../constants/themes';
 import { GreenhouseData, GrowthPhase, NotificationSettings, WaterLogEntry } from '../types';
 import {
+  diffLocalCalendarDays,
   localDateTimeInputToIso,
   matchesLocalDate,
   toLocalDateInputValue,
   toLocalDateTimeInputValue,
 } from '../utils/dateUtils';
+
+function computeSuggestedPlantAgeHst(
+  gh: GreenhouseData,
+  targetDateTimeLocal: string
+): number {
+  const targetDateRef = targetDateTimeLocal || toLocalDateTimeInputValue();
+  const latestWithHst = gh.waterLogs.find(
+    (l) => typeof l.plantAgeHst === 'number' && l.plantAgeHst >= 1 && l.plantAgeHst <= 75
+  );
+  if (latestWithHst && typeof latestWithHst.plantAgeHst === 'number') {
+    const dayDiff = diffLocalCalendarDays(latestWithHst.timestamp, targetDateRef);
+    return Math.min(75, Math.max(1, latestWithHst.plantAgeHst + dayDiff));
+  }
+  if (gh.plantingDate) {
+    const diffFromPlanting = diffLocalCalendarDays(gh.plantingDate, targetDateRef);
+    return Math.min(75, Math.max(1, diffFromPlanting >= 0 ? diffFromPlanting + 1 : 1));
+  }
+  return 1;
+}
 
 interface DashboardWaterControlProps {
   gh: GreenhouseData;
@@ -76,6 +97,10 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
   const [manualOperator, setManualOperator] = useState('Budi Santoso');
   const [manualNote, setManualNote] = useState('');
   const [inspectionDateTime, setInspectionDateTime] = useState(() => toLocalDateTimeInputValue());
+  const [plantAgeHst, setPlantAgeHst] = useState<number>(() =>
+    computeSuggestedPlantAgeHst(gh, toLocalDateTimeInputValue())
+  );
+  const [hstManualOverride, setHstManualOverride] = useState(false);
 
   // History filter, selection & chart hover
   const [logFilter, setLogFilter] = useState<'all' | 'manual' | 'dosing'>('all');
@@ -94,6 +119,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
 
   // Sync form defaults when switching GH
   useEffect(() => {
+    const nowInput = toLocalDateTimeInputValue();
     setPpmBefore(String(gh.currentWater.ppm));
     setPpmAfter(String(gh.currentWater.ppm));
     setPhBefore(String(gh.currentWater.ph));
@@ -105,7 +131,9 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     setNutrientAddedLiters('0');
     setPhChemical('none');
     setPhAdjMl('0');
-    setInspectionDateTime(toLocalDateTimeInputValue());
+    setInspectionDateTime(nowInput);
+    setPlantAgeHst(computeSuggestedPlantAgeHst(gh, nowInput));
+    setHstManualOverride(false);
     setDateFilter('');
     setSelectedLogIds([]);
     setConfirmClearAllLogs(false);
@@ -322,10 +350,12 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     if (phChemical !== 'none' && phMl > 0) autoParts.push(`${phChemical} +${phMl} ml`);
 
     const entryTimestamp = localDateTimeInputToIso(inspectionDateTime);
+    const clampedHst = Math.min(75, Math.max(1, Math.round(Number(plantAgeHst) || 1)));
 
     const entry: WaterLogEntry = {
       id: `wlog-${Date.now()}`,
       timestamp: entryTimestamp,
+      plantAgeHst: clampedHst,
       ppmBefore: startPpm,
       ppm: endPpm,
       ec,
@@ -379,6 +409,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     setPhChemical('none');
     setPhAdjMl('0');
     setManualNote('');
+    setHstManualOverride(false);
   };
 
   const handleDeleteLog = (id: string) => {
@@ -410,11 +441,12 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
 
   const handleExportCsv = () => {
     const header =
-      'Waktu,PPM_Awal,PPM_Akhir,EC,pH_Awal,pH_Akhir,Tambah_Air(L),Tambah_Nutrisi(L),Pengatur_pH,Takaran_pH(ml),Suhu(C),Debit(L/m),Tandon(%),Operator,Catatan\n';
+      'Waktu,Usia_Tanaman(HST),PPM_Awal,PPM_Akhir,EC,pH_Awal,pH_Akhir,Tambah_Air(L),Tambah_Nutrisi(L),Pengatur_pH,Takaran_pH(ml),Suhu(C),Debit(L/m),Tandon(%),Operator,Catatan\n';
     const rows = gh.waterLogs
       .map((l) =>
         [
           new Date(l.timestamp).toLocaleString('id-ID').replace(/,/g, ''),
+          l.plantAgeHst ? `${l.plantAgeHst} HST` : '-',
           l.ppmBefore ?? l.ppm,
           l.ppm,
           l.ec,
@@ -891,48 +923,101 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
             </div>
 
             <form onSubmit={handleManualSubmit} className="mt-4 space-y-4">
-              {/* Pemilihan Tanggal & Jam Pemeriksaan */}
+              {/* Pemilihan Tanggal & Jam Pemeriksaan + Usia Tanaman (1-75 HST) */}
               <div
-                className="rounded-lg border p-3.5 space-y-2"
+                className="rounded-lg border p-3.5 space-y-3"
                 style={{
                   borderColor: 'var(--app-border)',
                   backgroundColor: 'var(--app-canvas)',
                 }}
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label
-                    htmlFor="water-inspection-datetime"
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold"
-                  >
-                    <Calendar className="h-3.5 w-3.5" style={{ color: 'var(--app-accent)' }} />
-                    <span>Tanggal & Jam Pemeriksaan</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setInspectionDateTime(toLocalDateTimeInputValue())}
-                    className="rounded border px-2 py-0.5 text-[11px] font-medium cursor-pointer"
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label
+                      htmlFor="water-inspection-datetime"
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold"
+                    >
+                      <Calendar className="h-3.5 w-3.5" style={{ color: 'var(--app-accent)' }} />
+                      <span>Tanggal &amp; Jam Pemeriksaan</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nowInput = toLocalDateTimeInputValue();
+                        setInspectionDateTime(nowInput);
+                        if (!hstManualOverride) {
+                          setPlantAgeHst(computeSuggestedPlantAgeHst(gh, nowInput));
+                        }
+                      }}
+                      className="rounded border px-2 py-0.5 text-[11px] font-medium cursor-pointer"
+                      style={{
+                        borderColor: 'var(--app-border)',
+                        backgroundColor: 'var(--app-surface)',
+                        color: 'var(--app-accent)',
+                      }}
+                    >
+                      Sekarang
+                    </button>
+                  </div>
+                  <input
+                    id="water-inspection-datetime"
+                    type="datetime-local"
+                    required
+                    value={inspectionDateTime}
+                    onChange={(e) => {
+                      const nextDt = e.target.value;
+                      setInspectionDateTime(nextDt);
+                      if (!hstManualOverride && nextDt) {
+                        setPlantAgeHst(computeSuggestedPlantAgeHst(gh, nextDt));
+                      }
+                    }}
+                    className="w-full rounded-lg border px-3 py-2 text-xs sm:text-sm font-mono-tabular focus:outline-none"
                     style={{
                       borderColor: 'var(--app-border)',
                       backgroundColor: 'var(--app-surface)',
-                      color: 'var(--app-accent)',
+                      color: 'var(--app-text)',
+                    }}
+                  />
+                </div>
+
+                {/* Usia Tanaman (1 HST - 75 HST) */}
+                <div className="space-y-1.5 border-t pt-2.5" style={{ borderColor: 'var(--app-border)' }}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label
+                      htmlFor="water-plant-age-hst"
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold"
+                    >
+                      <Sprout className="h-3.5 w-3.5" style={{ color: 'var(--app-accent)' }} />
+                      <span>Usia Tanaman (1–75 HST)</span>
+                    </label>
+                    <span className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                      {latestLog?.plantAgeHst
+                        ? `Terakhir: ${latestLog.plantAgeHst} HST (+1/hari otomatis)`
+                        : 'Bertambah otomatis setiap hari'}
+                    </span>
+                  </div>
+                  <select
+                    id="water-plant-age-hst"
+                    aria-label="Pilih usia tanaman 1 sampai 75 HST"
+                    value={plantAgeHst}
+                    onChange={(e) => {
+                      setPlantAgeHst(Math.min(75, Math.max(1, Number(e.target.value) || 1)));
+                      setHstManualOverride(true);
+                    }}
+                    className="w-full rounded-lg border px-3 py-2 text-xs sm:text-sm font-mono-tabular font-semibold focus:outline-none cursor-pointer"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-surface)',
+                      color: 'var(--app-text)',
                     }}
                   >
-                    Sekarang
-                  </button>
+                    {Array.from({ length: 75 }, (_, i) => i + 1).map((hst) => (
+                      <option key={hst} value={hst}>
+                        {hst} HST (Hari Setelah Tanam)
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <input
-                  id="water-inspection-datetime"
-                  type="datetime-local"
-                  required
-                  value={inspectionDateTime}
-                  onChange={(e) => setInspectionDateTime(e.target.value)}
-                  className="w-full rounded-lg border px-3 py-2 text-xs sm:text-sm font-mono-tabular focus:outline-none"
-                  style={{
-                    borderColor: 'var(--app-border)',
-                    backgroundColor: 'var(--app-surface)',
-                    color: 'var(--app-text)',
-                  }}
-                />
               </div>
 
               {/* 1. Tambah Air (Liter) */}
@@ -1712,6 +1797,17 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                                 minute: '2-digit',
                               })}
                             </span>
+                            {typeof log.plantAgeHst === 'number' && (
+                              <span
+                                className="rounded px-1.5 py-0.5 text-[10px] font-bold"
+                                style={{
+                                  backgroundColor: 'var(--app-accent-soft)',
+                                  color: 'var(--app-accent)',
+                                }}
+                              >
+                                {log.plantAgeHst} HST
+                              </span>
+                            )}
                           </label>
                           <button
                             type="button"
@@ -1852,13 +1948,26 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                               />
                             </td>
                             <td className="py-2.5 pr-3 font-mono-tabular whitespace-nowrap">
-                              {new Date(log.timestamp).toLocaleString('id-ID', {
-                                day: '2-digit',
-                                month: 'short',
-                                year: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
+                              <div>
+                                {new Date(log.timestamp).toLocaleString('id-ID', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </div>
+                              {typeof log.plantAgeHst === 'number' && (
+                                <span
+                                  className="mt-0.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-bold"
+                                  style={{
+                                    backgroundColor: 'var(--app-accent-soft)',
+                                    color: 'var(--app-accent)',
+                                  }}
+                                >
+                                  {log.plantAgeHst} HST
+                                </span>
+                              )}
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono-tabular whitespace-nowrap">
                               <span style={{ color: 'var(--app-text-muted)' }}>

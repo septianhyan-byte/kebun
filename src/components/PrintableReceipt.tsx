@@ -77,6 +77,14 @@ export const PrintableReceipt: React.FC<PrintableReceiptProps> = ({
             <span className="text-gray-600">Metode</span>
             <span>{receipt.paymentMethod}</span>
           </div>
+          {receipt.paymentStatus && (
+            <div className="flex justify-between gap-2">
+              <span className="text-gray-600">Status</span>
+              <span className="font-bold uppercase">
+                {receipt.paymentStatus === 'sudah_dibayar' ? 'SUDAH DIBAYAR' : 'BELUM DIBAYAR'}
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="border-b border-dashed border-gray-400 py-2 space-y-1.5 text-[11px]">
@@ -212,8 +220,19 @@ export const PrintableReceipt: React.FC<PrintableReceiptProps> = ({
           <div className="font-semibold mt-0.5">Jual sendiri · {receipt.ghName}</div>
         </div>
         <div>
-          <div className="text-gray-500">Metode Pembayaran</div>
+          <div className="text-gray-500">Metode &amp; Status Bayar</div>
           <div className="font-semibold mt-0.5">{receipt.paymentMethod}</div>
+          {receipt.paymentStatus && (
+            <div
+              className={`mt-1 inline-block rounded px-2 py-0.5 text-[10px] font-bold uppercase border ${
+                receipt.paymentStatus === 'sudah_dibayar'
+                  ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
+                  : 'border-amber-500 bg-amber-50 text-amber-800'
+              }`}
+            >
+              {receipt.paymentStatus === 'sudah_dibayar' ? 'Sudah Dibayar' : 'Belum Dibayar'}
+            </div>
+          )}
         </div>
       </div>
 

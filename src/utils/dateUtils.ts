@@ -72,3 +72,23 @@ export function formatDateShortId(isoOrDate: string): string {
     year: 'numeric',
   });
 }
+
+export function diffLocalCalendarDays(
+  fromInput: string | Date,
+  toInput: string | Date
+): number {
+  const fromYmd =
+    typeof fromInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fromInput)
+      ? fromInput
+      : toLocalDateInputValue(fromInput);
+  const toYmd =
+    typeof toInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(toInput)
+      ? toInput
+      : toLocalDateInputValue(toInput);
+  const [fy, fm, fd] = fromYmd.split('-').map(Number);
+  const [ty, tm, td] = toYmd.split('-').map(Number);
+  if (!fy || !fm || !fd || !ty || !tm || !td) return 0;
+  const fromUtc = Date.UTC(fy, fm - 1, fd);
+  const toUtc = Date.UTC(ty, tm - 1, td);
+  return Math.round((toUtc - fromUtc) / 86400000);
+}

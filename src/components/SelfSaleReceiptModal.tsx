@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import {
   GreenhouseData,
+  SalePaymentStatus,
   SaleRecord,
   SelfSalePaymentProfile,
   SelfSaleReceipt,
@@ -48,6 +49,7 @@ interface SelfSaleReceiptModalProps {
     pricePerKg: number;
     buyer: string;
     notes: string;
+    paymentStatus?: SalePaymentStatus;
   } | null;
   paymentProfile: SelfSalePaymentProfile;
   onUpdatePaymentProfile: (next: SelfSalePaymentProfile) => void;
@@ -94,6 +96,8 @@ export const SelfSaleReceiptModal: React.FC<SelfSaleReceiptModalProps> = ({
   const [buyerPhone, setBuyerPhone] = useState('');
   const [paymentMethod, setPaymentMethod] =
     useState<SelfSaleReceipt['paymentMethod']>('QRIS / Transfer');
+  const [paymentStatus, setPaymentStatus] =
+    useState<SalePaymentStatus>('belum_dibayar');
   const [notes, setNotes] = useState('');
   const [paperFormat, setPaperFormat] =
     useState<SelfSaleReceipt['paperFormat']>('thermal80');
@@ -121,6 +125,7 @@ export const SelfSaleReceiptModal: React.FC<SelfSaleReceiptModalProps> = ({
       setDate(initialSale.date || toLocalDateInputValue());
       setBuyerName(initialSale.buyer || '');
       setBuyerPhone('');
+      setPaymentStatus(initialSale.paymentStatus || 'belum_dibayar');
       setNotes(initialSale.notes || '');
       setSaveAlsoToSales(false);
       setItems([
@@ -136,6 +141,7 @@ export const SelfSaleReceiptModal: React.FC<SelfSaleReceiptModalProps> = ({
       setDate(initialDraft.date || toLocalDateInputValue());
       setBuyerName(initialDraft.buyer || '');
       setBuyerPhone('');
+      setPaymentStatus(initialDraft.paymentStatus || 'belum_dibayar');
       setNotes(initialDraft.notes || '');
       setSaveAlsoToSales(true);
       setItems([
@@ -151,6 +157,7 @@ export const SelfSaleReceiptModal: React.FC<SelfSaleReceiptModalProps> = ({
       setDate(toLocalDateInputValue());
       setBuyerName('');
       setBuyerPhone('');
+      setPaymentStatus('belum_dibayar');
       setNotes('');
       setSaveAlsoToSales(true);
       setItems([
@@ -188,6 +195,7 @@ export const SelfSaleReceiptModal: React.FC<SelfSaleReceiptModalProps> = ({
       buyerName: buyerName.trim(),
       buyerPhone: buyerPhone.trim(),
       paymentMethod,
+      paymentStatus,
       items: resolvedItems,
       totalWeightKg,
       totalAmount,
@@ -204,6 +212,7 @@ export const SelfSaleReceiptModal: React.FC<SelfSaleReceiptModalProps> = ({
     buyerName,
     buyerPhone,
     paymentMethod,
+    paymentStatus,
     notes,
     paperFormat,
   ]);
@@ -301,6 +310,7 @@ export const SelfSaleReceiptModal: React.FC<SelfSaleReceiptModalProps> = ({
           buyer: builtReceipt.buyerName || initialSale.buyer,
           notes: combinedNotes,
           receiptNo: builtReceipt.receiptNumber,
+          paymentStatus,
         },
         true
       );
@@ -316,6 +326,7 @@ export const SelfSaleReceiptModal: React.FC<SelfSaleReceiptModalProps> = ({
           buyer: builtReceipt.buyerName || 'Pembeli Langsung',
           notes: combinedNotes,
           receiptNo: builtReceipt.receiptNumber,
+          paymentStatus,
           createdAt: new Date().toISOString(),
         },
         false
@@ -353,6 +364,7 @@ export const SelfSaleReceiptModal: React.FC<SelfSaleReceiptModalProps> = ({
             .join(' · ')
             .slice(0, 480),
           receiptNo: builtReceipt.receiptNumber,
+          paymentStatus,
           createdAt: new Date().toISOString(),
         },
         false
@@ -553,6 +565,57 @@ export const SelfSaleReceiptModal: React.FC<SelfSaleReceiptModalProps> = ({
                       <option value="Transfer Rekening">Transfer Rekening</option>
                       <option value="Tunai">Tunai</option>
                     </select>
+                  </div>
+                </div>
+
+                {/* Status Pembayaran Nota */}
+                <div>
+                  <label className="block text-[11px] font-medium mb-1">
+                    Status Pembayaran Pembeli
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentStatus('belum_dibayar')}
+                      className="h-9 rounded-lg border px-2.5 text-xs font-semibold cursor-pointer"
+                      style={{
+                        borderColor:
+                          paymentStatus === 'belum_dibayar'
+                            ? '#f59e0b'
+                            : 'var(--app-border)',
+                        backgroundColor:
+                          paymentStatus === 'belum_dibayar'
+                            ? 'rgba(245, 158, 11, 0.14)'
+                            : 'var(--app-surface)',
+                        color:
+                          paymentStatus === 'belum_dibayar'
+                            ? '#d97706'
+                            : 'var(--app-text-muted)',
+                      }}
+                    >
+                      Belum Dibayar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentStatus('sudah_dibayar')}
+                      className="h-9 rounded-lg border px-2.5 text-xs font-semibold cursor-pointer"
+                      style={{
+                        borderColor:
+                          paymentStatus === 'sudah_dibayar'
+                            ? '#10b981'
+                            : 'var(--app-border)',
+                        backgroundColor:
+                          paymentStatus === 'sudah_dibayar'
+                            ? 'rgba(16, 185, 129, 0.14)'
+                            : 'var(--app-surface)',
+                        color:
+                          paymentStatus === 'sudah_dibayar'
+                            ? '#059669'
+                            : 'var(--app-text-muted)',
+                      }}
+                    >
+                      Sudah Dibayar
+                    </button>
                   </div>
                 </div>
 

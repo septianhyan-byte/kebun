@@ -91,6 +91,12 @@ function cleanWaterLogForCloud(ownerUid: string, log: WaterLogEntry) {
     operator: String(log.operator || 'Petugas').slice(0, 120),
     note: String(log.note || '').slice(0, 500),
   };
+  if (typeof log.plantAgeHst === 'number' && !Number.isNaN(log.plantAgeHst)) {
+    const hst = Math.round(log.plantAgeHst);
+    if (hst >= 1 && hst <= 75) {
+      payload.plantAgeHst = hst;
+    }
+  }
   if (typeof log.ppmBefore === 'number' && !Number.isNaN(log.ppmBefore)) {
     payload.ppmBefore = log.ppmBefore;
   }
@@ -192,6 +198,11 @@ function cleanSaleForCloud(ownerUid: string, sale: SaleRecord) {
   };
   if (sale.receiptNo && String(sale.receiptNo).trim()) {
     payload.receiptNo = String(sale.receiptNo).trim().slice(0, 64);
+  }
+  if (sale.paymentStatus === 'belum_dibayar' || sale.paymentStatus === 'sudah_dibayar') {
+    payload.paymentStatus = sale.paymentStatus;
+  } else if (grade === 'Jual sendiri') {
+    payload.paymentStatus = 'belum_dibayar';
   }
   return { saleId, payload };
 }
@@ -598,6 +609,7 @@ export async function uploadSeasonToCloud(
             updatedAt: serverTimestamp(),
           };
           if ('receiptNo' in payload) updateFields.receiptNo = payload.receiptNo;
+          if ('paymentStatus' in payload) updateFields.paymentStatus = payload.paymentStatus;
           ops.push((b) => b.update(ref, updateFields));
         } else {
           ops.push((b) =>
@@ -972,9 +984,10 @@ export async function syncGreenhouseDeltaToCloud(params: {
     }
     if (addedLogs.length > 0) {
       const latest = addedLogs[0][1];
+      const hstPart = latest.plantAgeHst ? `${latest.plantAgeHst} HST · ` : '';
       activitySummaries.push({
         cat: 'water',
-        text: `Log air ${nextGh.name}: PPM ${latest.ppm}, pH ${latest.ph}${latest.note ? ` (${latest.note.slice(0, 60)})` : ''}`,
+        text: `Log air ${nextGh.name}: ${hstPart}PPM ${latest.ppm}, pH ${latest.ph}${latest.note ? ` (${latest.note.slice(0, 60)})` : ''}`,
       });
     } else if (deletedLogs.length > 0) {
       activitySummaries.push({
@@ -1208,6 +1221,9 @@ export async function syncGreenhouseDeltaToCloud(params: {
       if ('receiptNo' in salePayload) {
         saleUpdateFields.receiptNo = salePayload.receiptNo;
       }
+      if ('paymentStatus' in salePayload) {
+        saleUpdateFields.paymentStatus = salePayload.paymentStatus;
+      }
       await updateDoc(
         doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'sales', saleId),
         saleUpdateFields
@@ -1218,6 +1234,18 @@ export async function syncGreenhouseDeltaToCloud(params: {
       activitySummaries.push({
         cat: 'accounting',
         text: `Penjualan ${nextGh.name}: ${s.grade} ${s.weightKg} kg (Rp ${s.totalAmount.toLocaleString('id-ID')})`,
+      });
+    } else if (updatedSales.length > 0) {
+      const s = updatedSales[0][1];
+      const statusTxt =
+        s.paymentStatus === 'sudah_dibayar'
+          ? 'Sudah Dibayar'
+          : s.paymentStatus === 'belum_dibayar'
+          ? 'Belum Dibayar'
+          : 'diperbarui';
+      activitySummaries.push({
+        cat: 'accounting',
+        text: `Penjualan ${s.buyer || s.grade} (${nextGh.name}) → ${statusTxt}`,
       });
     } else if (deletedSales.length > 0) {
       activitySummaries.push({

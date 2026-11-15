@@ -211,6 +211,13 @@ export function formatEscPosSelfSaleReceipt(
     `GH      : ${receipt.ghName}`,
     `Pembeli : ${receipt.buyerName || 'Pelanggan Langsung'}`,
     `Bayar   : ${receipt.paymentMethod}`,
+    ...(receipt.paymentStatus
+      ? [
+          `Status  : ${
+            receipt.paymentStatus === 'sudah_dibayar' ? 'SUDAH DIBAYAR' : 'BELUM DIBAYAR'
+          }`,
+        ]
+      : []),
     '--------------------------------',
   ];
 

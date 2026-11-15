@@ -201,6 +201,10 @@
           "type": "string",
           "maxLength": 64
         },
+        "plantAgeHst": {
+          "type": "number",
+          "description": "Usia tanaman melon dalam Hari Setelah Tanam (1–75 HST) pada saat pemeriksaan air."
+        },
         "ppmBefore": {
           "type": "number"
         },
@@ -566,6 +570,10 @@
         "buyer": { "type": "string", "maxLength": 160 },
         "notes": { "type": "string", "maxLength": 500 },
         "receiptNo": { "type": "string", "maxLength": 64 },
+        "paymentStatus": {
+          "type": "string",
+          "enum": ["belum_dibayar", "sudah_dibayar"]
+        },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },

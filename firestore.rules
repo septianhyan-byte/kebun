@@ -137,11 +137,12 @@ service cloud.firestore {
 
     function isValidWaterLogItem(data) {
       return data.keys().hasAll(['id', 'ownerUid', 'timestamp', 'ppm', 'ec', 'ph', 'tempC', 'flowLpm', 'reservoirPct', 'abMixAddedMl', 'phAdjMl', 'phAdjType', 'source', 'operator', 'note', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'ownerUid', 'timestamp', 'ppmBefore', 'ppm', 'ec', 'phBefore', 'ph', 'tempC', 'flowLpm', 'reservoirPct', 'waterAddedLiters', 'nutrientAddedLiters', 'abMixAddedMl', 'phAdjMl', 'phAdjType', 'phChemical', 'source', 'operator', 'note', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'timestamp', 'plantAgeHst', 'ppmBefore', 'ppm', 'ec', 'phBefore', 'ph', 'tempC', 'flowLpm', 'reservoirPct', 'waterAddedLiters', 'nutrientAddedLiters', 'abMixAddedMl', 'phAdjMl', 'phAdjType', 'phChemical', 'source', 'operator', 'note', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && isValidId(data.ownerUid)
         && data.ownerUid == request.auth.uid
         && isStringBounded(data.timestamp, 64)
+        && (!('plantAgeHst' in data) || (data.plantAgeHst is number && data.plantAgeHst >= 1 && data.plantAgeHst <= 75))
         && isStringBounded(data.operator, 120)
         && isStringBounded(data.note, 500)
         && data.ppm is number
@@ -225,7 +226,7 @@ service cloud.firestore {
 
     function isValidSaleItem(data) {
       return data.keys().hasAll(['id', 'ownerUid', 'date', 'grade', 'weightKg', 'pricePerKg', 'totalAmount', 'buyer', 'notes', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'ownerUid', 'date', 'grade', 'weightKg', 'pricePerKg', 'totalAmount', 'buyer', 'notes', 'receiptNo', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'date', 'grade', 'weightKg', 'pricePerKg', 'totalAmount', 'buyer', 'notes', 'receiptNo', 'paymentStatus', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && isValidId(data.ownerUid)
         && data.ownerUid == request.auth.uid
@@ -240,6 +241,7 @@ service cloud.firestore {
         && isStringBounded(data.buyer, 160)
         && isStringBounded(data.notes, 500)
         && (!('receiptNo' in data) || isStringBounded(data.receiptNo, 64))
+        && (!('paymentStatus' in data) || data.paymentStatus in ['belum_dibayar', 'sudah_dibayar'])
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -538,7 +540,7 @@ service cloud.firestore {
             && incoming().id == existing().id
             && incoming().createdAt == existing().createdAt
             && incoming().updatedAt == request.time
-            && incoming().diff(existing()).affectedKeys().hasOnly(['date', 'grade', 'weightKg', 'pricePerKg', 'totalAmount', 'buyer', 'notes', 'receiptNo', 'updatedAt']);
+            && incoming().diff(existing()).affectedKeys().hasOnly(['date', 'grade', 'weightKg', 'pricePerKg', 'totalAmount', 'buyer', 'notes', 'receiptNo', 'paymentStatus', 'updatedAt']);
           allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(saleId) && existing().ownerUid == request.auth.uid;
         }
       }

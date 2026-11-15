@@ -238,7 +238,12 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
                   return (
                     <tr key={l.id}>
                       <td className="border border-gray-300 px-2 py-1 font-mono-tabular">
-                        {new Date(l.timestamp).toLocaleString('id-ID')}
+                        <div>{new Date(l.timestamp).toLocaleString('id-ID')}</div>
+                        {typeof l.plantAgeHst === 'number' && l.plantAgeHst >= 1 && (
+                          <div className="text-[10px] font-bold text-gray-700">
+                            Usia: {l.plantAgeHst} HST
+                          </div>
+                        )}
                       </td>
                       <td className="border border-gray-300 px-2 py-1 text-right font-mono-tabular">
                         {l.ppmBefore ?? l.ppm} → {l.ppm}
@@ -543,7 +548,14 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
                       {fmtRp(s.totalAmount)}
                     </td>
                     <td className="border border-gray-300 px-2 py-1">
-                      {s.buyer}
+                      <span>{s.buyer}</span>
+                      {s.grade === 'Jual sendiri' && (
+                        <span className="ml-1.5 inline-block rounded border border-gray-400 px-1 py-0.2 text-[9px] font-bold uppercase">
+                          {(s.paymentStatus || 'belum_dibayar') === 'sudah_dibayar'
+                            ? 'Sudah Dibayar'
+                            : 'Belum Dibayar'}
+                        </span>
+                      )}
                       {s.notes ? ` — ${s.notes}` : ''}
                     </td>
                   </tr>

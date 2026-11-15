@@ -54,6 +54,8 @@ export type SaleGrade =
   | 'Plonco'
   | 'Jual sendiri';
 
+export type SalePaymentStatus = 'belum_dibayar' | 'sudah_dibayar';
+
 export interface SaleRecord {
   id: string;
   date: string;
@@ -64,6 +66,7 @@ export interface SaleRecord {
   buyer: string;
   notes: string;
   receiptNo?: string;
+  paymentStatus?: SalePaymentStatus;
   createdAt?: string;
 }
 
@@ -96,6 +99,7 @@ export interface SelfSaleReceipt {
   buyerName: string;
   buyerPhone?: string;
   paymentMethod: 'QRIS / Transfer' | 'QRIS' | 'Transfer Rekening' | 'Tunai';
+  paymentStatus?: SalePaymentStatus;
   items: SelfSaleReceiptItem[];
   totalWeightKg: number;
   totalAmount: number;
@@ -126,6 +130,7 @@ export interface AppSettings {
 export interface WaterLogEntry {
   id: string;
   timestamp: string;
+  plantAgeHst?: number;
   ppmBefore?: number;
   ppm: number;
   ec: number;

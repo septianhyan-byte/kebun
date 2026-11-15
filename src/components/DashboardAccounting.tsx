@@ -2,9 +2,12 @@ import React, { useMemo, useState } from 'react';
 import {
   BarChart3,
   Calendar,
+  CheckCircle2,
+  Clock,
   Cloud,
   CloudOff,
   Download,
+  Eye,
   Plus,
   Printer,
   QrCode,
@@ -16,6 +19,7 @@ import {
   TrendingDown,
   TrendingUp,
   Wallet,
+  X,
 } from 'lucide-react';
 import {
   EXPENSE_CATEGORY_META,
@@ -27,6 +31,7 @@ import {
   GreenhouseData,
   ProductionExpenseEntry,
   SaleGrade,
+  SalePaymentStatus,
   SaleRecord,
   SeasonDocument,
   SelfSalePaymentProfile,
@@ -314,6 +319,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
       pricePerKg: number;
       buyer: string;
       notes: string;
+      paymentStatus?: SalePaymentStatus;
     } | null;
   }>({ open: false, initialSale: null, initialDraft: null });
 
@@ -346,12 +352,15 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
   const [saleTotalManualOverride, setSaleTotalManualOverride] = useState(false);
   const [saleBuyer, setSaleBuyer] = useState('');
   const [saleNotes, setSaleNotes] = useState('');
+  const [salePaymentStatus, setSalePaymentStatus] = useState<SalePaymentStatus>('belum_dibayar');
 
   const [saleGradeFilter, setSaleGradeFilter] = useState<'all' | SaleGrade>('all');
   const [saleDateFilter, setSaleDateFilter] = useState('');
   const [saleSearch, setSaleSearch] = useState('');
   const [selectedSaleIds, setSelectedSaleIds] = useState<string[]>([]);
   const [confirmClearSales, setConfirmClearSales] = useState(false);
+  const [selfPayFilter, setSelfPayFilter] = useState<'all' | SalePaymentStatus>('all');
+  const [buyerPreviewSaleId, setBuyerPreviewSaleId] = useState<string | null>(null);
 
   // === DASHBOARD 3: KEUNTUNGAN & GRAFIK STATE ===
   const [profitScope, setProfitScope] = useState<'gh' | 'season'>('gh');
@@ -562,6 +571,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
       totalAmount,
       buyer: saleBuyer.trim(),
       notes: saleNotes.trim(),
+      ...(saleGrade === 'Jual sendiri' ? { paymentStatus: salePaymentStatus } : {}),
       createdAt: new Date().toISOString(),
     };
 
@@ -576,6 +586,21 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
     setSaleTotalManualOverride(false);
     setSaleBuyer('');
     setSaleNotes('');
+    setSalePaymentStatus('belum_dibayar');
+  };
+
+  const handleToggleSalePaymentStatus = (saleId: string) => {
+    onUpdateGh((prev) => ({
+      ...prev,
+      sales: (prev.sales || []).map((item) => {
+        if (item.id !== saleId) return item;
+        const current: SalePaymentStatus = item.paymentStatus || 'belum_dibayar';
+        return {
+          ...item,
+          paymentStatus: current === 'sudah_dibayar' ? 'belum_dibayar' : 'sudah_dibayar',
+        };
+      }),
+    }));
   };
 
   const handleSaveSaleFromReceipt = (sale: SaleRecord, isUpdate?: boolean) => {
@@ -608,6 +633,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
         pricePerKg: resolvedPrice,
         buyer: saleBuyer.trim(),
         notes: saleNotes.trim(),
+        paymentStatus: salePaymentStatus,
       },
     });
   };
@@ -682,6 +708,62 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
     return { totalWeightKg, totalRevenueRp, avgPricePerKg, byGrade };
   }, [sales]);
 
+  const selfSalesTracker = useMemo(() => {
+    const allSelf = sales
+      .filter((s) => s.grade === 'Jual sendiri')
+      .sort((a, b) => b.date.localeCompare(a.date));
+
+    let unpaidCount = 0;
+    let unpaidWeightKg = 0;
+    let unpaidAmountRp = 0;
+    let paidCount = 0;
+    let paidWeightKg = 0;
+    let paidAmountRp = 0;
+
+    for (const s of allSelf) {
+      const status: SalePaymentStatus = s.paymentStatus || 'belum_dibayar';
+      if (status === 'sudah_dibayar') {
+        paidCount += 1;
+        paidWeightKg += s.weightKg || 0;
+        paidAmountRp += s.totalAmount || 0;
+      } else {
+        unpaidCount += 1;
+        unpaidWeightKg += s.weightKg || 0;
+        unpaidAmountRp += s.totalAmount || 0;
+      }
+    }
+
+    const filtered = allSelf.filter((s) => {
+      const status: SalePaymentStatus = s.paymentStatus || 'belum_dibayar';
+      if (selfPayFilter !== 'all' && status !== selfPayFilter) return false;
+      const q = saleSearch.trim().toLowerCase();
+      if (
+        q &&
+        !s.buyer.toLowerCase().includes(q) &&
+        !s.notes.toLowerCase().includes(q)
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    return {
+      allSelf,
+      filtered,
+      unpaidCount,
+      unpaidWeightKg,
+      unpaidAmountRp,
+      paidCount,
+      paidWeightKg,
+      paidAmountRp,
+    };
+  }, [sales, selfPayFilter, saleSearch]);
+
+  const buyerPreviewSale = useMemo(
+    () => sales.find((s) => s.id === buyerPreviewSaleId) || null,
+    [sales, buyerPreviewSaleId]
+  );
+
   const handleExportSalesCsv = () => {
     const headers = [
       'Tanggal',
@@ -691,6 +773,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
       'Harga per kg (Rp)',
       'Total Uang (Rp)',
       'Pembeli / Saluran',
+      'Status Pembayaran',
       'Catatan',
     ];
     const rows = filteredSales.map((s) => [
@@ -701,6 +784,11 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
       s.pricePerKg,
       s.totalAmount,
       s.buyer,
+      s.grade === 'Jual sendiri' || s.paymentStatus
+        ? (s.paymentStatus || 'belum_dibayar') === 'sudah_dibayar'
+          ? 'Sudah Dibayar'
+          : 'Belum Dibayar'
+        : '-',
       s.notes,
     ]);
     const csv = [headers, ...rows]
@@ -1609,7 +1697,12 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                   <button
                     key={opt.grade}
                     type="button"
-                    onClick={() => setSaleGrade(opt.grade)}
+                    onClick={() => {
+                      setSaleGrade(opt.grade);
+                      if (opt.grade === 'Jual sendiri') {
+                        setSalePaymentStatus('belum_dibayar');
+                      }
+                    }}
                     className="rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer"
                     style={{
                       borderColor: active ? opt.badgeColor : 'var(--app-border)',
@@ -1746,36 +1839,82 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
 
             {saleGrade === 'Jual sendiri' && (
               <div
-                className="flex flex-col gap-2.5 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+                className="flex flex-col gap-3 rounded-lg border p-3.5"
                 style={{
                   borderColor: 'var(--app-accent)',
                   backgroundColor: 'var(--app-accent-soft)',
                 }}
               >
-                <div className="space-y-0.5 text-xs">
-                  <div className="font-bold flex items-center gap-1.5">
-                    <QrCode className="h-3.5 w-3.5" style={{ color: 'var(--app-accent)' }} />
-                    <span>Opsi Nota Jual Sendiri, QRIS (Galeri) &amp; Nomor Rekening</span>
+                <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-0.5 text-xs">
+                    <div className="font-bold flex items-center gap-1.5">
+                      <QrCode className="h-3.5 w-3.5" style={{ color: 'var(--app-accent)' }} />
+                      <span>Opsi Jual Sendiri: Status Bayar, Nota, QRIS &amp; Rekening</span>
+                    </div>
+                    <p className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                      {paymentProfile.accountNumber || paymentProfile.qrisImageDataUrl
+                        ? `Rekening: ${paymentProfile.bankName || 'Bank'} ${paymentProfile.accountNumber || '-'} (${paymentProfile.accountHolderName || '-'}) · QRIS: ${paymentProfile.qrisImageDataUrl ? 'Sudah ada' : 'Belum dipilih'}`
+                        : 'Status awal otomatis Belum Dibayar. Tinggal ubah per pembeli saat sudah lunas.'}
+                    </p>
                   </div>
-                  <p className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
-                    {paymentProfile.accountNumber || paymentProfile.qrisImageDataUrl
-                      ? `Rekening: ${paymentProfile.bankName || 'Bank'} ${paymentProfile.accountNumber || '-'} (${paymentProfile.accountHolderName || '-'}) · QRIS: ${paymentProfile.qrisImageDataUrl ? 'Sudah ada' : 'Belum dipilih'}`
-                      : 'Atur nomor rekening, nama pemilik, dan barcode QRIS dari galeri lalu cetak nota langsung.'}
-                  </p>
+                  <button
+                    type="button"
+                    onClick={handleOpenNotaFromForm}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                    style={{
+                      borderColor: 'var(--app-accent)',
+                      backgroundColor: 'var(--app-surface)',
+                      color: 'var(--app-accent)',
+                    }}
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Buka Pembuat Nota &amp; QRIS
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleOpenNotaFromForm}
-                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold cursor-pointer whitespace-nowrap shrink-0"
-                  style={{
-                    borderColor: 'var(--app-accent)',
-                    backgroundColor: 'var(--app-surface)',
-                    color: 'var(--app-accent)',
-                  }}
-                >
-                  <Printer className="h-3.5 w-3.5" />
-                  Buka Pembuat Nota &amp; QRIS
-                </button>
+
+                {/* Pilihan Status Pembayaran Awal (Default: Belum Dibayar) */}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2.5" style={{ borderColor: 'var(--app-border)' }}>
+                  <span className="text-xs font-semibold">Status Pembayaran Awal:</span>
+                  <div
+                    className="flex items-center gap-1 rounded-lg p-1"
+                    style={{ backgroundColor: 'var(--app-surface)' }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSalePaymentStatus('belum_dibayar')}
+                      className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                        salePaymentStatus === 'belum_dibayar'
+                          ? 'bg-amber-600 text-white'
+                          : ''
+                      }`}
+                      style={
+                        salePaymentStatus === 'belum_dibayar'
+                          ? undefined
+                          : { color: 'var(--app-text-muted)' }
+                      }
+                    >
+                      <Clock className="h-3.5 w-3.5" />
+                      Belum Dibayar (Default)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSalePaymentStatus('sudah_dibayar')}
+                      className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                        salePaymentStatus === 'sudah_dibayar'
+                          ? 'bg-emerald-600 text-white'
+                          : ''
+                      }`}
+                      style={
+                        salePaymentStatus === 'sudah_dibayar'
+                          ? undefined
+                          : { color: 'var(--app-text-muted)' }
+                      }
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Sudah Dibayar
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1814,6 +1953,314 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
               </div>
             </div>
           </form>
+
+          {/* ======================================================= */}
+          {/* PANEL KHUSUS JUAL SENDIRI: PEMBELI, BERAT BUAH & TAGIHAN */}
+          {/* ======================================================= */}
+          {(selfSalesTracker.allSelf.length > 0 ||
+            saleGrade === 'Jual sendiri' ||
+            saleGradeFilter === 'Jual sendiri') && (
+            <div
+              className="rounded-xl border p-4 space-y-3.5"
+              style={{
+                borderColor: 'var(--app-accent)',
+                backgroundColor: 'var(--app-canvas)',
+              }}
+            >
+              <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h4 className="text-xs sm:text-sm font-bold flex items-center gap-1.5">
+                    <Receipt className="h-4 w-4" style={{ color: 'var(--app-accent)' }} />
+                    <span>Daftar Pembeli &amp; Tagihan Jual Sendiri</span>
+                  </h4>
+                  <p className="text-[11px] mt-0.5" style={{ color: 'var(--app-text-muted)' }}>
+                    Menampilkan Pembeli, Berat Buah, dan Total yang Harus Dibayar. Klik status untuk mengubah Belum Dibayar ↔ Sudah Dibayar per pembeli.
+                  </p>
+                </div>
+
+                <div
+                  className="flex flex-wrap items-center gap-1 rounded-lg p-1 self-start sm:self-center"
+                  style={{ backgroundColor: 'var(--app-surface-muted)' }}
+                >
+                  {(
+                    [
+                      { id: 'all', label: `Semua (${selfSalesTracker.allSelf.length})` },
+                      { id: 'belum_dibayar', label: `Belum Dibayar (${selfSalesTracker.unpaidCount})` },
+                      { id: 'sudah_dibayar', label: `Sudah Dibayar (${selfSalesTracker.paidCount})` },
+                    ] as const
+                  ).map((f) => {
+                    const active = selfPayFilter === f.id;
+                    return (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => setSelfPayFilter(f.id)}
+                        className="rounded-md px-2.5 py-1 text-[11px] font-semibold cursor-pointer whitespace-nowrap"
+                        style={{
+                          backgroundColor: active ? 'var(--app-surface)' : 'transparent',
+                          color: active ? 'var(--app-accent)' : 'var(--app-text-muted)',
+                        }}
+                      >
+                        {f.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Ringkasan Belum Dibayar vs Sudah Dibayar */}
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5" />
+                      Belum Dibayar ({selfSalesTracker.unpaidCount} pembeli)
+                    </div>
+                    <div className="text-[11px] font-mono-tabular text-amber-700/80 dark:text-amber-200/80">
+                      Berat buah: {selfSalesTracker.unpaidWeightKg.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg
+                    </div>
+                  </div>
+                  <div className="text-base sm:text-lg font-bold font-mono-tabular text-amber-800 dark:text-amber-200">
+                    {formatRp(selfSalesTracker.unpaidAmountRp)}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Sudah Dibayar ({selfSalesTracker.paidCount} pembeli)
+                    </div>
+                    <div className="text-[11px] font-mono-tabular text-emerald-700/80 dark:text-emerald-200/80">
+                      Berat buah: {selfSalesTracker.paidWeightKg.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg
+                    </div>
+                  </div>
+                  <div className="text-base sm:text-lg font-bold font-mono-tabular text-emerald-700 dark:text-emerald-300">
+                    {formatRp(selfSalesTracker.paidAmountRp)}
+                  </div>
+                </div>
+              </div>
+
+              {selfSalesTracker.filtered.length === 0 ? (
+                <div
+                  className="rounded-lg border border-dashed py-6 text-center text-xs"
+                  style={{ borderColor: 'var(--app-border)', color: 'var(--app-text-muted)' }}
+                >
+                  Belum ada catatan pembeli Jual sendiri pada filter ini.
+                </div>
+              ) : (
+                <>
+                  {/* Mobile Cards (<768px) */}
+                  <div className="space-y-2.5 md:hidden">
+                    {selfSalesTracker.filtered.map((item) => {
+                      const isPaid = (item.paymentStatus || 'belum_dibayar') === 'sudah_dibayar';
+                      return (
+                        <div
+                          key={item.id}
+                          className="rounded-lg border p-3 space-y-2.5"
+                          style={{
+                            borderColor: isPaid ? '#16A34A' : '#D97706',
+                            backgroundColor: 'var(--app-surface)',
+                          }}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="text-sm font-bold truncate">
+                                {item.buyer || 'Pembeli Langsung'}
+                              </div>
+                              <div className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                                {formatDateShortId(item.date)}
+                                {item.receiptNo ? ` · ${item.receiptNo}` : ''}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleSalePaymentStatus(item.id)}
+                              className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-bold cursor-pointer shrink-0 ${
+                                isPaid
+                                  ? 'bg-emerald-600 text-white'
+                                  : 'bg-amber-600 text-white'
+                              }`}
+                            >
+                              {isPaid ? (
+                                <CheckCircle2 className="h-3 w-3" />
+                              ) : (
+                                <Clock className="h-3 w-3" />
+                              )}
+                              {isPaid ? 'Sudah Dibayar' : 'Belum Dibayar'}
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 rounded-md border p-2.5" style={{ borderColor: 'var(--app-border)', backgroundColor: 'var(--app-canvas)' }}>
+                            <div>
+                              <div className="text-[10px]" style={{ color: 'var(--app-text-muted)' }}>
+                                Berat Buah
+                              </div>
+                              <div className="text-sm font-bold font-mono-tabular">
+                                {item.weightKg.toLocaleString('id-ID', { maximumFractionDigits: 2 })} kg
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-[10px]" style={{ color: 'var(--app-text-muted)' }}>
+                                Total yang Harus Dibayar
+                              </div>
+                              <div className="text-base font-bold font-mono-tabular text-emerald-700 dark:text-emerald-400">
+                                {formatRp(item.totalAmount)}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setBuyerPreviewSaleId(item.id)}
+                              className="inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-xs font-semibold cursor-pointer"
+                              style={{
+                                borderColor: 'var(--app-border)',
+                                backgroundColor: 'var(--app-canvas)',
+                              }}
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              Tunjukkan ke Pembeli
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setNotaModalState({
+                                  open: true,
+                                  initialSale: item,
+                                  initialDraft: null,
+                                })
+                              }
+                              className="inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-xs font-semibold cursor-pointer"
+                              style={{
+                                borderColor: 'var(--app-accent)',
+                                color: 'var(--app-accent)',
+                                backgroundColor: 'var(--app-accent-soft)',
+                              }}
+                            >
+                              <Printer className="h-3.5 w-3.5" />
+                              Nota
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Desktop/Tablet Table (>=768px) */}
+                  <div
+                    className="hidden md:block overflow-x-auto rounded-lg border"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-surface)',
+                    }}
+                  >
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr
+                          className="border-b text-left"
+                          style={{
+                            backgroundColor: 'var(--app-surface-muted)',
+                            borderColor: 'var(--app-border)',
+                          }}
+                        >
+                          <th className="px-3 py-2.5 font-semibold">Pembeli</th>
+                          <th className="px-3 py-2.5 font-semibold text-right">Berat Buah</th>
+                          <th className="px-3 py-2.5 font-semibold text-right">Total yang Harus Dibayar</th>
+                          <th className="px-3 py-2.5 font-semibold text-center">Status Pembayaran</th>
+                          <th className="px-3 py-2.5 font-semibold text-right">Tampilkan / Nota</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selfSalesTracker.filtered.map((item) => {
+                          const isPaid = (item.paymentStatus || 'belum_dibayar') === 'sudah_dibayar';
+                          return (
+                            <tr
+                              key={item.id}
+                              className="border-b last:border-b-0"
+                              style={{ borderColor: 'var(--app-border)' }}
+                            >
+                              <td className="px-3 py-2.5">
+                                <div className="font-bold text-sm">
+                                  {item.buyer || 'Pembeli Langsung'}
+                                </div>
+                                <div className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                                  {formatDateShortId(item.date)}
+                                  {item.receiptNo ? ` · ${item.receiptNo}` : ''}
+                                  {item.pricePerKg > 0 ? ` · ${formatRp(item.pricePerKg)}/kg` : ''}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-bold font-mono-tabular text-sm whitespace-nowrap">
+                                {item.weightKg.toLocaleString('id-ID', { maximumFractionDigits: 2 })} kg
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-bold font-mono-tabular text-sm whitespace-nowrap text-emerald-700 dark:text-emerald-400">
+                                {formatRp(item.totalAmount)}
+                              </td>
+                              <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleSalePaymentStatus(item.id)}
+                                  title="Klik untuk mengganti status Sudah Dibayar / Belum Dibayar"
+                                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold cursor-pointer transition-opacity hover:opacity-90 ${
+                                    isPaid
+                                      ? 'bg-emerald-600 text-white'
+                                      : 'bg-amber-600 text-white'
+                                  }`}
+                                >
+                                  {isPaid ? (
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <Clock className="h-3.5 w-3.5" />
+                                  )}
+                                  {isPaid ? 'Sudah Dibayar' : 'Belum Dibayar'}
+                                </button>
+                              </td>
+                              <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                                <div className="inline-flex items-center justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setBuyerPreviewSaleId(item.id)}
+                                    className="inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-xs font-semibold cursor-pointer"
+                                    style={{
+                                      borderColor: 'var(--app-border)',
+                                      backgroundColor: 'var(--app-canvas)',
+                                    }}
+                                  >
+                                    <Eye className="h-3.5 w-3.5" />
+                                    Tunjukkan
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setNotaModalState({
+                                        open: true,
+                                        initialSale: item,
+                                        initialDraft: null,
+                                      })
+                                    }
+                                    className="inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-xs font-semibold cursor-pointer"
+                                    style={{
+                                      borderColor: 'var(--app-accent)',
+                                      color: 'var(--app-accent)',
+                                      backgroundColor: 'var(--app-accent-soft)',
+                                    }}
+                                  >
+                                    <Printer className="h-3.5 w-3.5" />
+                                    Nota
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Filter & Bulk Controls */}
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -2043,7 +2490,24 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                         <td className="px-3 py-2.5 text-right font-bold font-mono-tabular whitespace-nowrap text-emerald-700 dark:text-emerald-400">
                           {formatRp(item.totalAmount)}
                         </td>
-                        <td className="px-3 py-2.5">{item.buyer || '—'}</td>
+                        <td className="px-3 py-2.5">
+                          <div className="font-medium">{item.buyer || '—'}</div>
+                          {item.grade === 'Jual sendiri' && (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleSalePaymentStatus(item.id)}
+                              className={`mt-1 inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-bold cursor-pointer ${
+                                (item.paymentStatus || 'belum_dibayar') === 'sudah_dibayar'
+                                  ? 'bg-emerald-600/15 text-emerald-700 dark:text-emerald-300'
+                                  : 'bg-amber-600/15 text-amber-800 dark:text-amber-300'
+                              }`}
+                            >
+                              {(item.paymentStatus || 'belum_dibayar') === 'sudah_dibayar'
+                                ? 'Sudah Dibayar'
+                                : 'Belum Dibayar'}
+                            </button>
+                          )}
+                        </td>
                         <td className="px-3 py-2.5 max-w-[200px] truncate" style={{ color: 'var(--app-text-muted)' }}>
                           {item.notes || '—'}
                         </td>
@@ -2424,6 +2888,182 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
             </div>
           </div>
         </section>
+      )}
+
+      {/* Kartu Tunjukkan Tagihan ke Pembeli (Jual Sendiri) */}
+      {buyerPreviewSale && (
+        <div
+          className="no-print fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Rincian Pembayaran Pembeli"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border p-5 shadow-2xl space-y-4"
+            style={{
+              backgroundColor: 'var(--app-surface)',
+              borderColor: 'var(--app-border)',
+              color: 'var(--app-text)',
+            }}
+          >
+            <div className="flex items-start justify-between gap-2 border-b pb-3" style={{ borderColor: 'var(--app-border)' }}>
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--app-accent)' }}>
+                  {paymentProfile.storeName || 'MelonFlow NFT'} · Jual Sendiri
+                </div>
+                <h3 className="text-base font-bold mt-0.5">
+                  Rincian Tagihan Pembeli
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBuyerPreviewSaleId(null)}
+                aria-label="Tutup rincian tagihan"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border cursor-pointer"
+                style={{ borderColor: 'var(--app-border)' }}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div
+              className="rounded-xl border p-4 space-y-3"
+              style={{
+                borderColor: 'var(--app-border)',
+                backgroundColor: 'var(--app-canvas)',
+              }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                    Pembeli
+                  </div>
+                  <div className="text-lg font-bold">
+                    {buyerPreviewSale.buyer || 'Pembeli Langsung'}
+                  </div>
+                </div>
+                <span
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-bold text-white ${
+                    (buyerPreviewSale.paymentStatus || 'belum_dibayar') === 'sudah_dibayar'
+                      ? 'bg-emerald-600'
+                      : 'bg-amber-600'
+                  }`}
+                >
+                  {(buyerPreviewSale.paymentStatus || 'belum_dibayar') === 'sudah_dibayar'
+                    ? 'Sudah Dibayar'
+                    : 'Belum Dibayar'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 border-t pt-3" style={{ borderColor: 'var(--app-border)' }}>
+                <div>
+                  <div className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                    Berat Buah
+                  </div>
+                  <div className="text-lg font-bold font-mono-tabular">
+                    {buyerPreviewSale.weightKg.toLocaleString('id-ID', { maximumFractionDigits: 2 })} kg
+                  </div>
+                  {buyerPreviewSale.pricePerKg > 0 && (
+                    <div className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                      @ {formatRp(buyerPreviewSale.pricePerKg)}/kg
+                    </div>
+                  )}
+                </div>
+                <div className="text-right">
+                  <div className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                    Total yang Harus Dibayar
+                  </div>
+                  <div className="text-2xl font-extrabold font-mono-tabular text-emerald-700 dark:text-emerald-400">
+                    {formatRp(buyerPreviewSale.totalAmount)}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {(paymentProfile.accountNumber || paymentProfile.qrisImageDataUrl) && (
+              <div
+                className="rounded-xl border p-3.5 space-y-2.5 text-center"
+                style={{
+                  borderColor: 'var(--app-border)',
+                  backgroundColor: 'var(--app-canvas)',
+                }}
+              >
+                {paymentProfile.qrisImageDataUrl && (
+                  <div className="flex flex-col items-center gap-1.5">
+                    <span className="text-xs font-bold">Scan QRIS untuk Membayar</span>
+                    <img
+                      src={paymentProfile.qrisImageDataUrl}
+                      alt="Barcode QRIS"
+                      referrerPolicy="no-referrer"
+                      className="max-h-44 w-auto rounded-lg border bg-white p-1.5 object-contain"
+                      style={{ borderColor: 'var(--app-border)' }}
+                    />
+                  </div>
+                )}
+                {paymentProfile.accountNumber && (
+                  <div className="text-xs space-y-0.5 pt-1">
+                    <div className="font-semibold">
+                      Transfer {paymentProfile.bankName || 'Bank'}:{' '}
+                      <span className="font-mono-tabular font-bold">
+                        {paymentProfile.accountNumber}
+                      </span>
+                    </div>
+                    {paymentProfile.accountHolderName && (
+                      <div style={{ color: 'var(--app-text-muted)' }}>
+                        a.n. {paymentProfile.accountHolderName}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => handleToggleSalePaymentStatus(buyerPreviewSale.id)}
+                className={`flex-1 inline-flex h-10 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-bold text-white cursor-pointer ${
+                  (buyerPreviewSale.paymentStatus || 'belum_dibayar') === 'sudah_dibayar'
+                    ? 'bg-amber-600'
+                    : 'bg-emerald-600'
+                }`}
+              >
+                {(buyerPreviewSale.paymentStatus || 'belum_dibayar') === 'sudah_dibayar' ? (
+                  <>
+                    <Clock className="h-4 w-4" />
+                    Ubah ke Belum Dibayar
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Tandai Sudah Dibayar
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const target = buyerPreviewSale;
+                  setBuyerPreviewSaleId(null);
+                  setNotaModalState({
+                    open: true,
+                    initialSale: target,
+                    initialDraft: null,
+                  });
+                }}
+                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border px-3.5 text-xs font-semibold cursor-pointer"
+                style={{
+                  borderColor: 'var(--app-accent)',
+                  color: 'var(--app-accent)',
+                  backgroundColor: 'var(--app-accent-soft)',
+                }}
+              >
+                <Printer className="h-4 w-4" />
+                Cetak Nota
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Modal Pembuatan & Cetak Nota Jual Sendiri + QRIS & Rekening */}
