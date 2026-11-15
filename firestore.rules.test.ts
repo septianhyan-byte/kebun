@@ -11,6 +11,7 @@ export interface DirtyDozenCase {
   operation: 'get' | 'list' | 'create' | 'update' | 'delete';
   authUid: string | null;
   emailVerified: boolean;
+  email?: string;
   payload?: Record<string, unknown>;
   expectedResult: 'PERMISSION_DENIED';
 }
@@ -138,3 +139,30 @@ export const DIRTY_DOZEN_CASES: DirtyDozenCase[] = [
 ];
 
 assert.equal(DIRTY_DOZEN_CASES.length, 12);
+
+export const EMAIL_ALLOWLIST_CASES: DirtyDozenCase[] = [
+  {
+    id: 13,
+    name: 'Verified third-party Google email blocked by email allowlist',
+    collectionPath: 'users/user-other/seasons/season-1',
+    operation: 'create',
+    authUid: 'user-other',
+    emailVerified: true,
+    email: 'stranger@gmail.com',
+    payload: { id: 'season-1', ownerUid: 'user-other', title: 'Unauthorized' },
+    expectedResult: 'PERMISSION_DENIED',
+  },
+  {
+    id: 14,
+    name: 'Allowed email with unverified email_verified=false blocked (spoof guard)',
+    collectionPath: 'users/user-owner/seasons/season-1',
+    operation: 'create',
+    authUid: 'user-owner',
+    emailVerified: false,
+    email: 'septianhyan@gmail.com',
+    payload: { id: 'season-1', ownerUid: 'user-owner', title: 'Spoofed' },
+    expectedResult: 'PERMISSION_DENIED',
+  },
+];
+
+assert.equal(EMAIL_ALLOWLIST_CASES.length, 2);

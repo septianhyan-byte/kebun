@@ -23,8 +23,16 @@ service cloud.firestore {
       return resource.data;
     }
 
+    function isAllowedEmail() {
+      return 'email' in request.auth.token
+        && request.auth.token.email is string
+        && request.auth.token.email in ['septianhyan@gmail.com'];
+    }
+
     function isSignedIn() {
-      return request.auth != null && request.auth.token.email_verified == true;
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && isAllowedEmail();
     }
 
     function isOwner(userId) {
