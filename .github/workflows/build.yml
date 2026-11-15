@@ -35,7 +35,7 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: TypeScript check
         run: npm run lint
@@ -84,9 +84,14 @@ jobs:
         with:
           enablement: true
 
+      - name: Explain if GitHub Pages is not enabled yet
+        if: steps.pages.outcome != 'success'
+        run: |
+          echo "GitHub Pages belum aktif atau repo bersifat Private pada paket Free. Aktifkan di Settings -> Pages -> Source: GitHub Actions (repo Public)." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Install dependencies
         if: steps.pages.outcome == 'success'
-        run: npm install --no-audit --no-fund
+        run: npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: Build for GitHub Pages subpath
         if: steps.pages.outcome == 'success'
