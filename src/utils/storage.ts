@@ -603,4 +603,41 @@ export function savePendingPaymentSync(pending: boolean): void {
   }
 }
 
+const OPERATOR_NAMES_KEY = 'melonflow_operator_names_v1';
 
+export function loadOperatorNames(): string[] {
+  try {
+    const raw = localStorage.getItem(OPERATOR_NAMES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      .map((x) => x.trim().slice(0, 80));
+  } catch {
+    return [];
+  }
+}
+
+export function saveOperatorNames(names: string[]): string[] {
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of names) {
+    const clean = raw.trim().slice(0, 80);
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(clean);
+    }
+  }
+  try {
+    localStorage.setItem(OPERATOR_NAMES_KEY, JSON.stringify(unique));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('melonflow:operators-updated', { detail: unique }));
+    }
+  } catch {
+    // ignore storage quota errors
+  }
+  return unique;
+}

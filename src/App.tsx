@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
-import { AlertTriangle, BellRing, Cloud, Edit3, Info, Plus } from 'lucide-react';
+import { AlertTriangle, BellRing, ChevronLeft, ChevronRight, Cloud, Edit3, Info, Plus } from 'lucide-react';
 import { BOTANICAL_THEMES, FONT_OPTIONS, GROWTH_PHASE_SPECS } from './constants/themes';
 import { auth, googleProvider } from './firebase';
 import { useOnlineStatus } from './hooks/usePWAInstall';
@@ -79,12 +79,35 @@ function hexToSoftRgba(hex: string, alpha = 0.12): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+const DASHBOARD_ORDER: DashboardTab[] = ['water', 'treatment', 'plants', 'accounting'];
+
+function hasHorizontalScrollAncestor(
+  target: EventTarget | null,
+  boundary: HTMLElement | null
+): boolean {
+  let node = target instanceof HTMLElement ? target : null;
+  while (node && node !== boundary) {
+    const tag = node.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'SVG') {
+      return true;
+    }
+    const style = window.getComputedStyle(node);
+    const ox = style.overflowX;
+    if ((ox === 'auto' || ox === 'scroll') && node.scrollWidth > node.clientWidth + 6) {
+      return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
 export default function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [docStore, setDocStore] = useState<{ documents: SeasonDocument[]; activeDocId: string }>(() =>
     loadDocuments()
   );
   const [activeTab, setActiveTab] = useState<DashboardTab>('water');
+  const swipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
 
   // Modals state
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -929,6 +952,62 @@ export default function App() {
     return Math.max(0, Math.floor((Date.now() - start) / 86400000));
   }, [activeGh.plantingDate]);
 
+  const activeTabIndex = DASHBOARD_ORDER.indexOf(activeTab);
+
+  const goRelativeDashboard = useCallback(
+    (delta: -1 | 1) => {
+      const idx = DASHBOARD_ORDER.indexOf(activeTab);
+      const nextIdx = idx + delta;
+      if (nextIdx < 0 || nextIdx >= DASHBOARD_ORDER.length) return;
+      setActiveTab(DASHBOARD_ORDER[nextIdx]);
+      if (typeof window !== 'undefined' && window.scrollY > 180) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    },
+    [activeTab]
+  );
+
+  const handleMainTouchStart = (e: TouchEvent<HTMLElement>) => {
+    const anyModalOpen =
+      settingsOpen ||
+      ghModalState.open ||
+      newDocOpen ||
+      printOpen ||
+      mobileApkOpen ||
+      accountModalOpen;
+    if (anyModalOpen || e.touches.length !== 1) {
+      swipeStartRef.current = null;
+      return;
+    }
+    if (hasHorizontalScrollAncestor(e.target, e.currentTarget)) {
+      swipeStartRef.current = null;
+      return;
+    }
+    swipeStartRef.current = {
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY,
+      time: Date.now(),
+    };
+  };
+
+  const handleMainTouchEnd = (e: TouchEvent<HTMLElement>) => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!start || e.changedTouches.length === 0) return;
+
+    const dx = e.changedTouches[0].clientX - start.x;
+    const dy = e.changedTouches[0].clientY - start.y;
+    const elapsed = Date.now() - start.time;
+
+    if (Math.abs(dx) >= 65 && Math.abs(dx) > Math.abs(dy) * 1.5 && elapsed < 750) {
+      if (dx < 0) {
+        goRelativeDashboard(1);
+      } else {
+        goRelativeDashboard(-1);
+      }
+    }
+  };
+
   return (
     <div
       className="min-h-screen transition-colors"
@@ -959,8 +1038,12 @@ export default function App() {
         alerts={alerts}
       />
 
-      {/* Main Screen Content (hidden on print) */}
-      <main className="no-print mx-auto max-w-[1440px] px-3 py-4 sm:px-6 sm:py-6 space-y-4 sm:space-y-6">
+      {/* Main Screen Content (hidden on print, supports horizontal swipe between dashboards) */}
+      <main
+        onTouchStart={handleMainTouchStart}
+        onTouchEnd={handleMainTouchEnd}
+        className="no-print mx-auto max-w-[1440px] px-3 py-4 sm:px-6 sm:py-6 space-y-4 sm:space-y-6 touch-pan-y"
+      >
         {/* Season & Greenhouse Switcher Bar */}
         <section
           className="rounded-xl border p-4 sm:px-5 sm:py-4"
@@ -997,12 +1080,50 @@ export default function App() {
                   </>
                 )}
               </div>
-              <h1 className="text-lg sm:text-xl font-bold tracking-tight">
-                {activeTab === 'water' && `${activeGh.name} — Kontrol PPM & pH Larutan NFT`}
-                {activeTab === 'treatment' && `${activeGh.name} — Perawatan Penyemprotan, Pengolesan & Pengocoran`}
-                {activeTab === 'plants' && `${activeGh.name} — Pemantauan Kondisi Tanaman 1 s/d ${activeGh.capacity}`}
-                {activeTab === 'accounting' && `${activeGh.name} — Pembukuan Melon (Biaya, Penjualan & Keuntungan)`}
-              </h1>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h1 className="text-lg sm:text-xl font-bold tracking-tight">
+                  {activeTab === 'water' && `${activeGh.name} — Kontrol PPM & pH Larutan NFT`}
+                  {activeTab === 'treatment' && `${activeGh.name} — Perawatan Penyemprotan, Pengolesan & Pengocoran`}
+                  {activeTab === 'plants' && `${activeGh.name} — Pemantauan Kondisi Tanaman 1 s/d ${activeGh.capacity}`}
+                  {activeTab === 'accounting' && `${activeGh.name} — Pembukuan Melon (Biaya, Penjualan & Keuntungan)`}
+                </h1>
+                <div className="flex items-center gap-1.5 xl:hidden">
+                  <button
+                    type="button"
+                    disabled={activeTabIndex <= 0}
+                    onClick={() => goRelativeDashboard(-1)}
+                    aria-label="Dashboard sebelumnya"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border disabled:opacity-35 cursor-pointer"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-surface-muted)',
+                      color: 'var(--app-text)',
+                    }}
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </button>
+                  <span
+                    className="text-[11px] font-medium whitespace-nowrap"
+                    style={{ color: 'var(--app-text-muted)' }}
+                  >
+                    Geser ({activeTabIndex + 1}/4)
+                  </span>
+                  <button
+                    type="button"
+                    disabled={activeTabIndex >= DASHBOARD_ORDER.length - 1}
+                    onClick={() => goRelativeDashboard(1)}
+                    aria-label="Dashboard berikutnya"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border disabled:opacity-35 cursor-pointer"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-surface-muted)',
+                      color: 'var(--app-text)',
+                    }}
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
               {cloudUser && activities[0] && (
                 <button
                   type="button"

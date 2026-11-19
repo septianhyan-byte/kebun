@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -26,6 +26,7 @@ import {
   toLocalDateInputValue,
   toLocalDateTimeInputValue,
 } from '../utils/dateUtils';
+import { OperatorField } from './OperatorField';
 
 function computeSuggestedPlantAgeHst(
   gh: GreenhouseData,
@@ -82,11 +83,11 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
   const [customPhMaxInput, setCustomPhMaxInput] = useState(effectivePhMax.toFixed(1));
   const [targetsSavedFeedback, setTargetsSavedFeedback] = useState(false);
 
-  // Manual form state: Initial & Final PPM / pH + Air + Nutrisi 1-20L + KOH / Phosphoric
-  const [ppmBefore, setPpmBefore] = useState(String(currentWater.ppm));
-  const [ppmAfter, setPpmAfter] = useState(String(currentWater.ppm));
-  const [phBefore, setPhBefore] = useState(String(currentWater.ph));
-  const [phAfter, setPhAfter] = useState(String(currentWater.ph));
+  // Manual form state: Initial & Final PPM / pH (always start empty) + Air + Nutrisi 1-20L + KOH / Phosphoric
+  const [ppmBefore, setPpmBefore] = useState('');
+  const [ppmAfter, setPpmAfter] = useState('');
+  const [phBefore, setPhBefore] = useState('');
+  const [phAfter, setPhAfter] = useState('');
   const [waterAddedLiters, setWaterAddedLiters] = useState('0');
   const [nutrientAddedLiters, setNutrientAddedLiters] = useState('0');
   const [phChemical, setPhChemical] = useState<'none' | 'KOH' | 'Phosphoric'>('none');
@@ -94,13 +95,60 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
   const [manualTemp, setManualTemp] = useState(String(currentWater.tempC));
   const [manualFlow, setManualFlow] = useState(String(currentWater.flowLpm));
   const [manualReservoir, setManualReservoir] = useState(String(currentWater.reservoirPct));
-  const [manualOperator, setManualOperator] = useState('Budi Santoso');
+  const [manualOperator, setManualOperator] = useState('');
   const [manualNote, setManualNote] = useState('');
   const [inspectionDateTime, setInspectionDateTime] = useState(() => toLocalDateTimeInputValue());
   const [plantAgeHst, setPlantAgeHst] = useState<number>(() =>
     computeSuggestedPlantAgeHst(gh, toLocalDateTimeInputValue())
   );
   const [hstManualOverride, setHstManualOverride] = useState(false);
+
+  // Quick-jump focus & highlight from KPI result cards
+  const [highlightedTarget, setHighlightedTarget] = useState<
+    'ppm' | 'ph' | 'temp' | 'reservoir' | null
+  >(null);
+  const highlightTimerRef = useRef<number | null>(null);
+  const ppmBoxRef = useRef<HTMLDivElement | null>(null);
+  const ppmInputRef = useRef<HTMLInputElement | null>(null);
+  const phBoxRef = useRef<HTMLDivElement | null>(null);
+  const phInputRef = useRef<HTMLInputElement | null>(null);
+  const tempBoxRef = useRef<HTMLDivElement | null>(null);
+  const tempInputRef = useRef<HTMLInputElement | null>(null);
+  const reservoirBoxRef = useRef<HTMLDivElement | null>(null);
+  const reservoirInputRef = useRef<HTMLInputElement | null>(null);
+
+  const jumpToTarget = (target: 'ppm' | 'ph' | 'temp' | 'reservoir') => {
+    setHighlightedTarget(target);
+    if (highlightTimerRef.current !== null) {
+      window.clearTimeout(highlightTimerRef.current);
+    }
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedTarget(null);
+      highlightTimerRef.current = null;
+    }, 2400);
+
+    const box =
+      target === 'ppm'
+        ? ppmBoxRef.current
+        : target === 'ph'
+        ? phBoxRef.current
+        : target === 'temp'
+        ? tempBoxRef.current
+        : reservoirBoxRef.current;
+    const input =
+      target === 'ppm'
+        ? ppmInputRef.current
+        : target === 'ph'
+        ? phInputRef.current
+        : target === 'temp'
+        ? tempInputRef.current
+        : reservoirInputRef.current;
+
+    box?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => {
+      input?.focus({ preventScroll: true });
+    }, 320);
+  };
 
   // History filter, selection & chart hover
   const [logFilter, setLogFilter] = useState<'all' | 'manual' | 'dosing'>('all');
@@ -117,13 +165,13 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     setCustomPhMaxInput(effectivePhMax.toFixed(1));
   }, [gh.id, effectivePpmMin, effectivePpmMax, effectivePhMin, effectivePhMax]);
 
-  // Sync form defaults when switching GH
+  // Sync form defaults when switching GH (keep PPM/pH & Petugas empty)
   useEffect(() => {
     const nowInput = toLocalDateTimeInputValue();
-    setPpmBefore(String(gh.currentWater.ppm));
-    setPpmAfter(String(gh.currentWater.ppm));
-    setPhBefore(String(gh.currentWater.ph));
-    setPhAfter(String(gh.currentWater.ph));
+    setPpmBefore('');
+    setPpmAfter('');
+    setPhBefore('');
+    setPhAfter('');
     setManualTemp(String(gh.currentWater.tempC));
     setManualFlow(String(gh.currentWater.flowLpm));
     setManualReservoir(String(gh.currentWater.reservoirPct));
@@ -131,46 +179,29 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     setNutrientAddedLiters('0');
     setPhChemical('none');
     setPhAdjMl('0');
+    setManualOperator('');
     setInspectionDateTime(nowInput);
     setPlantAgeHst(computeSuggestedPlantAgeHst(gh, nowInput));
     setHstManualOverride(false);
+    setHighlightedTarget(null);
     setDateFilter('');
     setSelectedLogIds([]);
     setConfirmClearAllLogs(false);
     setTargetsSavedFeedback(false);
   }, [gh.id]);
 
-  // Estimate PPM/pH after based on manual inputs (user can still overwrite PPM Akhir / pH Akhir freely)
+  // Estimate reservoir percentage when water/nutrient added, without overwriting empty PPM/pH inputs
   const estimateAfterValues = (
     nextWaterL: number,
     nextNutrientL: number,
-    nextChem: 'none' | 'KOH' | 'Phosphoric',
-    nextPhMl: number
+    _nextChem: 'none' | 'KOH' | 'Phosphoric',
+    _nextPhMl: number
   ) => {
-    const startPpm = Number(ppmBefore) || currentWater.ppm;
-    const startPh = Number(phBefore) || currentWater.ph;
-    const currentTankL = Math.max(200, (gh.reservoirLiters * currentWater.reservoirPct) / 100);
-
-    // Dilution from added water + increase from AB Mix (approx +28 ppm per 1L pekatan on 2000L tandon)
-    const dilutedPpm =
-      nextWaterL > 0 ? startPpm * (currentTankL / (currentTankL + nextWaterL)) : startPpm;
-    const nutrientBoost = nextNutrientL * (56000 / Math.max(500, currentTankL));
-    const estPpm = Math.round(dilutedPpm + nutrientBoost);
-
-    let estPh = startPh;
-    if (nextChem === 'KOH' && nextPhMl > 0) {
-      estPh = Number(Math.min(9.5, startPh + nextPhMl * 0.012).toFixed(2));
-    } else if (nextChem === 'Phosphoric' && nextPhMl > 0) {
-      estPh = Number(Math.max(3.5, startPh - nextPhMl * 0.012).toFixed(2));
-    }
-
+    if (nextWaterL <= 0 && nextNutrientL <= 0) return;
     const estRes = Math.min(
       100,
       Math.round(currentWater.reservoirPct + ((nextWaterL + nextNutrientL) / Math.max(100, gh.reservoirLiters)) * 100)
     );
-
-    setPpmAfter(String(estPpm));
-    setPhAfter(String(estPh));
     setManualReservoir(String(estRes));
   };
 
@@ -371,7 +402,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
       phAdjType,
       phChemical,
       source: 'manual',
-      operator: manualOperator.trim() || 'Operator',
+      operator: manualOperator.trim() || 'Petugas',
       note:
         manualNote.trim() ||
         (autoParts.length > 0 ? autoParts.join(' · ') : 'Pengukuran manual TDS & pH meter'),
@@ -399,15 +430,16 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
       };
     });
 
-    // Advance initial values to newly saved final values
-    setPpmBefore(String(endPpm));
-    setPpmAfter(String(endPpm));
-    setPhBefore(String(endPh));
-    setPhAfter(String(endPh));
+    // Keep PPM/pH initial & final and Petugas fields empty after saving
+    setPpmBefore('');
+    setPpmAfter('');
+    setPhBefore('');
+    setPhAfter('');
     setWaterAddedLiters('0');
     setNutrientAddedLiters('0');
     setPhChemical('none');
     setPhAdjMl('0');
+    setManualOperator('');
     setManualNote('');
     setHstManualOverride(false);
   };
@@ -746,15 +778,25 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
         </div>
       </section>
 
-      {/* 4-Column KPI Strip */}
+      {/* 4-Column Interactive KPI Strip */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {/* KPI 1: PPM Awal -> Akhir & EC */}
         <div
-          className="rounded-xl border p-4 sm:p-5"
+          role="button"
+          tabIndex={0}
+          onClick={() => jumpToTarget('ppm')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              jumpToTarget('ppm');
+            }
+          }}
+          className="rounded-xl border p-4 sm:p-5 text-left transition-all hover:shadow-md cursor-pointer focus-visible:outline-none focus-visible:ring-2"
           style={{
             backgroundColor: 'var(--app-surface)',
             borderColor: 'var(--app-border)',
           }}
+          title="Ketuk untuk langsung menuju kolom input PPM"
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium" style={{ color: 'var(--app-text-muted)' }}>
@@ -772,7 +814,11 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
             <span className="text-xs" style={{ color: 'var(--app-text-muted)' }}>·</span>
             <button
               type="button"
-              onClick={handleEcFactorToggle}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleEcFactorToggle();
+              }}
+              onKeyDown={(e) => e.stopPropagation()}
               title="Klik untuk ganti konversi EC (500 / 700)"
               className="text-xs font-mono-tabular underline decoration-dotted cursor-pointer"
               style={{ color: 'var(--app-text-muted)' }}
@@ -788,25 +834,40 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
               Batas: {effectivePpmMin}–{effectivePpmMax}
             </span>
           </div>
-          <div className="mt-2 flex items-center gap-1.5 text-xs font-medium">
-            {ppmStatus.ok ? (
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            ) : (
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
-            )}
-            <span className={ppmStatus.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>
-              {ppmStatus.label}
+          <div className="mt-2 flex items-center justify-between gap-2 text-xs font-medium">
+            <span className="flex items-center gap-1.5">
+              {ppmStatus.ok ? (
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              ) : (
+                <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+              )}
+              <span className={ppmStatus.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>
+                {ppmStatus.label}
+              </span>
+            </span>
+            <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold shrink-0" style={{ color: 'var(--app-accent)' }}>
+              Isi PPM <ArrowRight className="h-3 w-3" />
             </span>
           </div>
         </div>
 
         {/* KPI 2: pH Awal -> Akhir */}
         <div
-          className="rounded-xl border p-4 sm:p-5"
+          role="button"
+          tabIndex={0}
+          onClick={() => jumpToTarget('ph')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              jumpToTarget('ph');
+            }
+          }}
+          className="rounded-xl border p-4 sm:p-5 text-left transition-all hover:shadow-md cursor-pointer focus-visible:outline-none focus-visible:ring-2"
           style={{
             backgroundColor: 'var(--app-surface)',
             borderColor: 'var(--app-border)',
           }}
+          title="Ketuk untuk langsung menuju kolom input pH"
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium" style={{ color: 'var(--app-text-muted)' }}>
@@ -825,25 +886,40 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
           <div className="mt-2 text-xs font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
             Awal: {(latestLog?.phBefore ?? currentWater.ph).toFixed(2)} → Akhir: {(latestLog?.ph ?? currentWater.ph).toFixed(2)}
           </div>
-          <div className="mt-2 flex items-center gap-1.5 text-xs font-medium">
-            {phStatus.ok ? (
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            ) : (
-              <AlertTriangle className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
-            )}
-            <span className={phStatus.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}>
-              {phStatus.label}
+          <div className="mt-2 flex items-center justify-between gap-2 text-xs font-medium">
+            <span className="flex items-center gap-1.5">
+              {phStatus.ok ? (
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              ) : (
+                <AlertTriangle className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
+              )}
+              <span className={phStatus.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}>
+                {phStatus.label}
+              </span>
+            </span>
+            <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold shrink-0" style={{ color: 'var(--app-accent)' }}>
+              Isi pH <ArrowRight className="h-3 w-3" />
             </span>
           </div>
         </div>
 
         {/* KPI 3: Suhu & Sirkulasi */}
         <div
-          className="rounded-xl border p-4 sm:p-5"
+          role="button"
+          tabIndex={0}
+          onClick={() => jumpToTarget('temp')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              jumpToTarget('temp');
+            }
+          }}
+          className="rounded-xl border p-4 sm:p-5 text-left transition-all hover:shadow-md cursor-pointer focus-visible:outline-none focus-visible:ring-2"
           style={{
             backgroundColor: 'var(--app-surface)',
             borderColor: 'var(--app-border)',
           }}
+          title="Ketuk untuk langsung menuju kolom input Suhu & Debit"
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium" style={{ color: 'var(--app-text-muted)' }}>
@@ -859,21 +935,34 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
               {currentWater.flowLpm.toFixed(1)} L/mnt
             </span>
           </div>
-          <div className="mt-3 flex items-center gap-1.5 text-xs">
+          <div className="mt-3 flex items-center justify-between gap-2 text-xs">
             <span style={{ color: 'var(--app-text-muted)' }}>
               Sirkulasi: {currentWater.pumpCirculation ? 'Aktif (24 jam NFT)' : 'Berhenti'} ·{' '}
               {gh.gulliesCount} talang
+            </span>
+            <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold shrink-0" style={{ color: 'var(--app-accent)' }}>
+              Isi Suhu <ArrowRight className="h-3 w-3" />
             </span>
           </div>
         </div>
 
         {/* KPI 4: Level Tandon */}
         <div
-          className="rounded-xl border p-4 sm:p-5"
+          role="button"
+          tabIndex={0}
+          onClick={() => jumpToTarget('reservoir')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              jumpToTarget('reservoir');
+            }
+          }}
+          className="rounded-xl border p-4 sm:p-5 text-left transition-all hover:shadow-md cursor-pointer focus-visible:outline-none focus-visible:ring-2"
           style={{
             backgroundColor: 'var(--app-surface)',
             borderColor: 'var(--app-border)',
           }}
+          title="Ketuk untuk langsung menuju kolom input Volume Tandon"
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium" style={{ color: 'var(--app-text-muted)' }}>
@@ -890,7 +979,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
               {gh.reservoirLiters.toLocaleString('id-ID')} L)
             </span>
           </div>
-          <div className="mt-3 h-2 w-full overflow-hidden rounded-full" style={{ backgroundColor: 'var(--app-surface-muted)' }}>
+          <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full" style={{ backgroundColor: 'var(--app-surface-muted)' }}>
             <div
               className="h-full rounded-full transition-all"
               style={{
@@ -898,6 +987,11 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                 backgroundColor: currentWater.reservoirPct < 30 ? '#DC2626' : 'var(--app-accent)',
               }}
             />
+          </div>
+          <div className="mt-1.5 flex justify-end">
+            <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold" style={{ color: 'var(--app-accent)' }}>
+              Isi Tandon <ArrowRight className="h-3 w-3" />
+            </span>
           </div>
         </div>
       </section>
@@ -1223,16 +1317,31 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                   4. Pembacaan PPM & pH (Awal → Akhir)
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div
+                  ref={ppmBoxRef}
+                  className="grid grid-cols-2 gap-3 rounded-lg border p-2 transition-all"
+                  style={{
+                    borderColor: highlightedTarget === 'ppm' ? 'var(--app-accent)' : 'transparent',
+                    backgroundColor:
+                      highlightedTarget === 'ppm' ? 'var(--app-accent-soft)' : 'transparent',
+                  }}
+                >
                   <div>
-                    <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--app-text-muted)' }}>
+                    <label
+                      htmlFor="water-ppm-before"
+                      className="block text-[11px] font-medium mb-1"
+                      style={{ color: 'var(--app-text-muted)' }}
+                    >
                       PPM Awal
                     </label>
                     <input
+                      ref={ppmInputRef}
+                      id="water-ppm-before"
                       type="number"
                       min={0}
                       max={5000}
                       required
+                      placeholder="Kosong (isi PPM awal)"
                       value={ppmBefore}
                       onChange={(e) => setPpmBefore(e.target.value)}
                       className="w-full rounded-lg border px-3 py-2 text-sm font-mono-tabular focus:outline-none"
@@ -1244,14 +1353,20 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--app-accent)' }}>
+                    <label
+                      htmlFor="water-ppm-after"
+                      className="block text-[11px] font-medium mb-1"
+                      style={{ color: 'var(--app-accent)' }}
+                    >
                       PPM Akhir (Hasil Ukur)
                     </label>
                     <input
+                      id="water-ppm-after"
                       type="number"
                       min={0}
                       max={5000}
                       required
+                      placeholder="Kosong (isi PPM akhir)"
                       value={ppmAfter}
                       onChange={(e) => setPpmAfter(e.target.value)}
                       className="w-full rounded-lg border px-3 py-2 text-sm font-mono-tabular font-semibold focus:outline-none"
@@ -1264,17 +1379,32 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div
+                  ref={phBoxRef}
+                  className="grid grid-cols-2 gap-3 rounded-lg border p-2 transition-all"
+                  style={{
+                    borderColor: highlightedTarget === 'ph' ? 'var(--app-accent)' : 'transparent',
+                    backgroundColor:
+                      highlightedTarget === 'ph' ? 'var(--app-accent-soft)' : 'transparent',
+                  }}
+                >
                   <div>
-                    <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--app-text-muted)' }}>
+                    <label
+                      htmlFor="water-ph-before"
+                      className="block text-[11px] font-medium mb-1"
+                      style={{ color: 'var(--app-text-muted)' }}
+                    >
                       pH Awal
                     </label>
                     <input
+                      ref={phInputRef}
+                      id="water-ph-before"
                       type="number"
                       step="0.01"
                       min={0}
                       max={14}
                       required
+                      placeholder="Kosong (isi pH awal)"
                       value={phBefore}
                       onChange={(e) => setPhBefore(e.target.value)}
                       className="w-full rounded-lg border px-3 py-2 text-sm font-mono-tabular focus:outline-none"
@@ -1286,15 +1416,21 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium mb-1" style={{ color: 'var(--app-accent)' }}>
+                    <label
+                      htmlFor="water-ph-after"
+                      className="block text-[11px] font-medium mb-1"
+                      style={{ color: 'var(--app-accent)' }}
+                    >
                       pH Akhir (Hasil Ukur)
                     </label>
                     <input
+                      id="water-ph-after"
                       type="number"
                       step="0.01"
                       min={0}
                       max={14}
                       required
+                      placeholder="Kosong (isi pH akhir)"
                       value={phAfter}
                       onChange={(e) => setPhAfter(e.target.value)}
                       className="w-full rounded-lg border px-3 py-2 text-sm font-mono-tabular font-semibold focus:outline-none"
@@ -1316,21 +1452,35 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                   }}
                 >
                   <span className="inline-flex items-center gap-1">
-                    PPM: {ppmBefore || 0} <ArrowRight className="h-3 w-3" />{' '}
-                    <strong>{ppmAfter || 0} ppm</strong>
+                    PPM: {ppmBefore.trim() !== '' ? ppmBefore : '—'}{' '}
+                    <ArrowRight className="h-3 w-3" />{' '}
+                    <strong>{ppmAfter.trim() !== '' ? `${ppmAfter} ppm` : '—'}</strong>
                   </span>
                   <span className="inline-flex items-center gap-1">
-                    pH: {Number(phBefore || 0).toFixed(2)} <ArrowRight className="h-3 w-3" />{' '}
-                    <strong>{Number(phAfter || 0).toFixed(2)}</strong>
+                    pH: {phBefore.trim() !== '' ? Number(phBefore).toFixed(2) : '—'}{' '}
+                    <ArrowRight className="h-3 w-3" />{' '}
+                    <strong>{phAfter.trim() !== '' ? Number(phAfter).toFixed(2) : '—'}</strong>
                   </span>
                 </div>
               </div>
 
               {/* Additional manual sensor & note fields */}
-              <div className="grid grid-cols-3 gap-2.5">
-                <div>
-                  <label className="block text-[11px] font-medium mb-1">Suhu (°C)</label>
+              <div className="grid grid-cols-3 gap-2">
+                <div
+                  ref={tempBoxRef}
+                  className="rounded-lg border p-1.5 transition-all"
+                  style={{
+                    borderColor: highlightedTarget === 'temp' ? 'var(--app-accent)' : 'transparent',
+                    backgroundColor:
+                      highlightedTarget === 'temp' ? 'var(--app-accent-soft)' : 'transparent',
+                  }}
+                >
+                  <label htmlFor="water-manual-temp" className="block text-[11px] font-medium mb-1">
+                    Suhu (°C)
+                  </label>
                   <input
+                    ref={tempInputRef}
+                    id="water-manual-temp"
                     type="number"
                     step="0.1"
                     min={5}
@@ -1345,9 +1495,12 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                     }}
                   />
                 </div>
-                <div>
-                  <label className="block text-[11px] font-medium mb-1">Debit (L/mnt)</label>
+                <div className="rounded-lg border border-transparent p-1.5">
+                  <label htmlFor="water-manual-flow" className="block text-[11px] font-medium mb-1">
+                    Debit (L/mnt)
+                  </label>
                   <input
+                    id="water-manual-flow"
                     type="number"
                     step="0.1"
                     min={0}
@@ -1362,9 +1515,25 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                     }}
                   />
                 </div>
-                <div>
-                  <label className="block text-[11px] font-medium mb-1">Tandon (%)</label>
+                <div
+                  ref={reservoirBoxRef}
+                  className="rounded-lg border p-1.5 transition-all"
+                  style={{
+                    borderColor:
+                      highlightedTarget === 'reservoir' ? 'var(--app-accent)' : 'transparent',
+                    backgroundColor:
+                      highlightedTarget === 'reservoir' ? 'var(--app-accent-soft)' : 'transparent',
+                  }}
+                >
+                  <label
+                    htmlFor="water-manual-reservoir"
+                    className="block text-[11px] font-medium mb-1"
+                  >
+                    Tandon (%)
+                  </label>
                   <input
+                    ref={reservoirInputRef}
+                    id="water-manual-reservoir"
                     type="number"
                     min={0}
                     max={100}
@@ -1380,22 +1549,13 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                <div>
-                  <label className="block text-[11px] font-medium mb-1">Petugas</label>
-                  <input
-                    type="text"
-                    value={manualOperator}
-                    onChange={(e) => setManualOperator(e.target.value)}
-                    placeholder="Nama petugas"
-                    className="w-full rounded-lg border px-3 py-2 text-xs focus:outline-none"
-                    style={{
-                      borderColor: 'var(--app-border)',
-                      backgroundColor: 'var(--app-canvas)',
-                      color: 'var(--app-text)',
-                    }}
-                  />
-                </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 items-start">
+                <OperatorField
+                  id="water-manual-operator"
+                  label="Petugas"
+                  value={manualOperator}
+                  onChange={setManualOperator}
+                />
                 <div>
                   <label className="block text-[11px] font-medium mb-1">Catatan Lapangan</label>
                   <input

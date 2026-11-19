@@ -30,6 +30,7 @@ import {
   toLocalDateInputValue,
   toLocalDateTimeInputValue,
 } from '../utils/dateUtils';
+import { OperatorField } from './OperatorField';
 
 interface DashboardTreatmentsProps {
   gh: GreenhouseData;
@@ -67,7 +68,7 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
   );
   const [completedAtInput, setCompletedAtInput] = useState(() => toLocalDateTimeInputValue());
   const [formStatus, setFormStatus] = useState<TreatmentStatus>('terjadwal');
-  const [operator, setOperator] = useState('Budi Santoso');
+  const [operator, setOperator] = useState('');
   const [notes, setNotes] = useState('');
   const [manualInputMode, setManualInputMode] = useState(false);
 
@@ -152,7 +153,7 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
       scheduledAt: isoDate,
       completedAt: isoCompleted,
       status: formStatus,
-      operator: operator.trim() || 'Operator',
+      operator: operator.trim() || 'Petugas',
       notes: notes.trim(),
     };
 
@@ -166,6 +167,7 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
     setMedicineName('');
     setActiveIngredient('');
     setDosage('');
+    setOperator('');
     setNotes('');
   };
 
@@ -623,21 +625,14 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
               </div>
             )}
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label className="block text-xs font-medium mb-1">Petugas Pelaksana</label>
-                <input
-                  type="text"
-                  value={operator}
-                  onChange={(e) => setOperator(e.target.value)}
-                  className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none"
-                  style={{
-                    borderColor: 'var(--app-border)',
-                    backgroundColor: 'var(--app-canvas)',
-                    color: 'var(--app-text)',
-                  }}
-                />
-              </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 items-start">
+              <OperatorField
+                id="treatment-operator"
+                label="Petugas Pelaksana"
+                value={operator}
+                onChange={setOperator}
+                textSizeClass="text-sm"
+              />
               <div>
                 <label className="block text-xs font-medium mb-1">Catatan Teknis</label>
                 <input
