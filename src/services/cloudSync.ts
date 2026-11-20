@@ -208,7 +208,7 @@ function cleanSaleForCloud(ownerUid: string, sale: SaleRecord) {
 }
 
 function cleanPlantForCloud(p: PlantCondition): PlantCondition {
-  return {
+  const cleaned: PlantCondition = {
     id: Number(p.id),
     status: p.status,
     fruitingStatus: p.fruitingStatus || (p.fruitCount > 0 ? 'berbuah' : 'tidak_berbuah'),
@@ -224,6 +224,12 @@ function cleanPlantForCloud(p: PlantCondition): PlantCondition {
     inspectionDate: p.inspectionDate ? String(p.inspectionDate).slice(0, 32) : '',
     updatedAt: String(p.updatedAt || new Date().toISOString()).slice(0, 64),
   };
+  if (Array.isArray(p.fruitWeights) && p.fruitWeights.length > 0) {
+    cleaned.fruitWeights = p.fruitWeights
+      .slice(0, 20)
+      .map((w) => Math.max(0, Number(w) || 0));
+  }
+  return cleaned;
 }
 
 function buildPlantBlocks(plants: PlantCondition[]): Array<{

@@ -3,6 +3,7 @@ import {
   AlertCircle,
   Apple,
   ArrowDown,
+  ArrowUp,
   Calendar,
   CheckCircle2,
   ChevronLeft,
@@ -51,11 +52,64 @@ function getFruitQuality(p: PlantCondition): FruitQuality {
   return p.fruitQuality === 'jelek' ? 'jelek' : 'bagus';
 }
 
+function getFruitWeights(p: PlantCondition): number[] {
+  if (Array.isArray(p.fruitWeights) && p.fruitWeights.length > 0) {
+    return p.fruitWeights.map((w) => Math.max(0, Number(w) || 0));
+  }
+  const count = Math.max(0, Math.round(Number(p.fruitCount) || 0));
+  const total = Math.max(0, Number(p.estWeightKg) || 0);
+  if (count <= 1) {
+    return total > 0 ? [total] : [];
+  }
+  const arr = Array.from({ length: count }, () => 0);
+  if (total > 0) arr[0] = total;
+  return arr;
+}
+
+function adjustWeightsForCount(
+  existingWeights: number[],
+  nextCount: number,
+  fallbackTotalKg: number
+): { fruitWeights: number[]; estWeightKg: number } {
+  const count = Math.max(0, Math.round(nextCount));
+  if (count === 0) {
+    return { fruitWeights: [], estWeightKg: 0 };
+  }
+  const base =
+    existingWeights.length > 0
+      ? existingWeights
+      : fallbackTotalKg > 0
+      ? [fallbackTotalKg]
+      : [];
+  const nextWeights = Array.from({ length: count }, (_, idx) =>
+    Math.max(0, Number(base[idx] ?? 0) || 0)
+  );
+  const sum = Number(nextWeights.reduce((a, b) => a + b, 0).toFixed(2));
+  return { fruitWeights: nextWeights, estWeightKg: sum };
+}
+
+function sanitizeDecimalDraft(raw: string): string {
+  const normalized = raw.replace(/,/g, '.').replace(/[^\d.]/g, '');
+  const firstDot = normalized.indexOf('.');
+  if (firstDot === -1) return normalized;
+  return (
+    normalized.slice(0, firstDot + 1) +
+    normalized.slice(firstDot + 1).replace(/\./g, '')
+  );
+}
+
+function sanitizeIntDraft(raw: string): string {
+  return raw.replace(/[^\d]/g, '');
+}
+
 export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
   gh,
   onUpdateGh,
 }) => {
   const inspectorRef = useRef<HTMLElement | null>(null);
+  const matrixTopRef = useRef<HTMLElement | null>(null);
+  const pulseTimerRef = useRef<number | null>(null);
+  const [inspectorPulse, setInspectorPulse] = useState(false);
   const [viewMode, setViewMode] = useState<'block' | 'all'>('block');
   const [colorMode, setColorMode] = useState<'health' | 'fruiting' | 'quality'>('health');
   const [activeBlock, setActiveBlock] = useState(0); // 0 = 1-100, 1 = 101-200...
@@ -82,6 +136,8 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
   const [batchFruitCount, setBatchFruitCount] = useState('');
   const [batchHeightCm, setBatchHeightCm] = useState('');
   const [batchEstWeightKg, setBatchEstWeightKg] = useState('');
+  const [batchFruit1WeightKg, setBatchFruit1WeightKg] = useState('');
+  const [batchFruit2WeightKg, setBatchFruit2WeightKg] = useState('');
   const [batchBrix, setBatchBrix] = useState('');
   const [batchSymptom, setBatchSymptom] = useState('');
   const [batchAction, setBatchAction] = useState('');
@@ -96,16 +152,26 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     plants: PlantCondition[];
   } | null>(null);
 
-  // String draft states for Single Plant Inspector numeric fields so "0" can be deleted cleanly
+  // String draft states & input refs for Single Plant Inspector numeric fields (prevents activeElement clobbering)
   const [heightInput, setHeightInput] = useState('0');
   const [fruitCountInput, setFruitCountInput] = useState('0');
   const [weightInput, setWeightInput] = useState('0');
+  const [fruitWeightInputs, setFruitWeightInputs] = useState<string[]>([]);
   const [brixInput, setBrixInput] = useState('0');
+
+  const avgWeightInputRef = useRef<HTMLInputElement | null>(null);
+  const heightInputRef = useRef<HTMLInputElement | null>(null);
+  const fruitCountInputRef = useRef<HTMLInputElement | null>(null);
+  const weightInputRef = useRef<HTMLInputElement | null>(null);
+  const fruitWeightInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const brixInputRef = useRef<HTMLInputElement | null>(null);
+
   const lastSyncedPlantIdRef = useRef<number | null>(null);
   const lastExternalNumRef = useRef<{
     heightCm: number;
     fruitCount: number;
     estWeightKg: number;
+    fruitWeightsSig: string;
     brix: number;
   } | null>(null);
 
@@ -151,8 +217,10 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
 
   const weightMetrics = useMemo(() => {
     let sampledCount = 0;
+    let sampledFruitCount = 0;
     let totalSampleWeightKg = 0;
     let fruitingActiveCount = 0;
+    let twoFruitCount = 0;
     let totalFruits = 0;
     let goodPlantCount = 0;
     let badPlantCount = 0;
@@ -168,10 +236,18 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       if (p.estWeightKg > 0) {
         sampledCount += 1;
         totalSampleWeightKg += p.estWeightKg;
+        const weights = getFruitWeights(p);
+        const positiveWeights = weights.filter((w) => w > 0);
+        if (Array.isArray(p.fruitWeights) && p.fruitWeights.length > 0 && positiveWeights.length > 0) {
+          sampledFruitCount += positiveWeights.length;
+        } else {
+          sampledFruitCount += Math.max(1, p.fruitCount || 1);
+        }
       }
       if (getFruiting(p) === 'berbuah') {
         fruitingActiveCount += 1;
         const fruitQty = Math.max(1, p.fruitCount || 0);
+        if (fruitQty >= 2) twoFruitCount += 1;
         totalFruits += fruitQty;
         if (getFruitQuality(p) === 'jelek') {
           badPlantCount += 1;
@@ -191,7 +267,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       }
     }
 
-    const sampleAvgKg = sampledCount > 0 ? totalSampleWeightKg / sampledCount : 0;
+    const sampleAvgKg = sampledFruitCount > 0 ? totalSampleWeightKg / sampledFruitCount : 0;
     const effectiveAvgKg =
       typeof gh.avgMelonWeightKg === 'number' && !Number.isNaN(gh.avgMelonWeightKg)
         ? gh.avgMelonWeightKg
@@ -204,9 +280,11 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     const badEstimatedKg = badFruits * effectiveAvgKg;
     return {
       sampledCount,
+      sampledFruitCount,
       totalSampleWeightKg,
       sampleAvgKg,
       fruitingActiveCount,
+      twoFruitCount,
       totalFruits,
       effectiveAvgKg,
       estimatedTotalKg,
@@ -238,7 +316,10 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     }
     if (lastAvgExtRef.current !== gh.avgMelonWeightKg) {
       lastAvgExtRef.current = gh.avgMelonWeightKg;
-      if (typeof gh.avgMelonWeightKg === 'number') {
+      if (
+        typeof gh.avgMelonWeightKg === 'number' &&
+        document.activeElement !== avgWeightInputRef.current
+      ) {
         setAvgWeightInput(String(gh.avgMelonWeightKg));
       }
     }
@@ -272,50 +353,95 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
   }, [gh.plants, selectedId]);
 
   // Keep numeric drafts in sync when switching plant or when external action changes a value,
-  // WITHOUT snapping an intentionally cleared "" input back to "0".
+  // NEVER overwriting an input that currently holds user focus.
   useEffect(() => {
     if (!selectedPlant) return;
+    const weights = getFruitWeights(selectedPlant);
+    const slotCount = selectedPlant.fruitCount >= 2 ? Math.min(5, selectedPlant.fruitCount) : 0;
+    const normalizedWeights = Array.from({ length: slotCount }, (_, i) =>
+      Math.max(0, Number(weights[i] ?? 0) || 0)
+    );
+    const weightsSig = normalizedWeights.join('|');
+
     if (lastSyncedPlantIdRef.current !== selectedPlant.id) {
       lastSyncedPlantIdRef.current = selectedPlant.id;
       setHeightInput(String(selectedPlant.heightCm));
       setFruitCountInput(String(selectedPlant.fruitCount));
       setWeightInput(String(selectedPlant.estWeightKg));
+      setFruitWeightInputs(normalizedWeights.map((w) => String(w)));
       setBrixInput(String(selectedPlant.brix));
       lastExternalNumRef.current = {
         heightCm: selectedPlant.heightCm,
         fruitCount: selectedPlant.fruitCount,
         estWeightKg: selectedPlant.estWeightKg,
+        fruitWeightsSig: weightsSig,
         brix: selectedPlant.brix,
       };
       return;
     }
 
+    const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
     const prevExt = lastExternalNumRef.current;
-    if (!prevExt || prevExt.heightCm !== selectedPlant.heightCm) {
+
+    if (
+      (!prevExt || prevExt.heightCm !== selectedPlant.heightCm) &&
+      activeEl !== heightInputRef.current
+    ) {
       setHeightInput(String(selectedPlant.heightCm));
     }
-    if (!prevExt || prevExt.fruitCount !== selectedPlant.fruitCount) {
+    if (
+      (!prevExt || prevExt.fruitCount !== selectedPlant.fruitCount) &&
+      activeEl !== fruitCountInputRef.current
+    ) {
       setFruitCountInput(String(selectedPlant.fruitCount));
     }
-    if (!prevExt || prevExt.estWeightKg !== selectedPlant.estWeightKg) {
+    if (
+      (!prevExt || prevExt.estWeightKg !== selectedPlant.estWeightKg) &&
+      activeEl !== weightInputRef.current
+    ) {
       setWeightInput(String(selectedPlant.estWeightKg));
     }
-    if (!prevExt || prevExt.brix !== selectedPlant.brix) {
+    if (!prevExt || prevExt.fruitWeightsSig !== weightsSig) {
+      setFruitWeightInputs((prevDrafts) =>
+        normalizedWeights.map((w, idx) =>
+          activeEl === fruitWeightInputRefs.current[idx] && prevDrafts[idx] !== undefined
+            ? prevDrafts[idx]
+            : String(w)
+        )
+      );
+    }
+    if (
+      (!prevExt || prevExt.brix !== selectedPlant.brix) &&
+      activeEl !== brixInputRef.current
+    ) {
       setBrixInput(String(selectedPlant.brix));
     }
     lastExternalNumRef.current = {
       heightCm: selectedPlant.heightCm,
       fruitCount: selectedPlant.fruitCount,
       estWeightKg: selectedPlant.estWeightKg,
+      fruitWeightsSig: weightsSig,
       brix: selectedPlant.brix,
     };
   }, [selectedPlant]);
 
-  const handleSelectPlant = (id: number) => {
+  const handleSelectPlant = (id: number, scrollToInspector = false) => {
     setSelectedId(id);
     const blockIdx = Math.floor((id - 1) / 100);
     if (blockIdx >= 0 && blockIdx < blockCount) {
       setActiveBlock(blockIdx);
+    }
+    if (scrollToInspector) {
+      setInspectorPulse(true);
+      if (pulseTimerRef.current !== null) {
+        window.clearTimeout(pulseTimerRef.current);
+      }
+      pulseTimerRef.current = window.setTimeout(() => {
+        setInspectorPulse(false);
+      }, 1200);
+      window.requestAnimationFrame(() => {
+        inspectorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
     }
   };
 
@@ -327,7 +453,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       setFruitingFilter('all');
       setQualityFilter('all');
       setDateFilter('');
-      handleSelectPlant(num);
+      handleSelectPlant(num, true);
     }
   };
 
@@ -439,6 +565,14 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       batchEstWeightKg.trim() !== '' && !Number.isNaN(Number(batchEstWeightKg))
         ? Math.max(0, Number(batchEstWeightKg))
         : null;
+    const parsedFruit1W =
+      batchFruit1WeightKg.trim() !== '' && !Number.isNaN(Number(batchFruit1WeightKg))
+        ? Math.max(0, Number(batchFruit1WeightKg))
+        : null;
+    const parsedFruit2W =
+      batchFruit2WeightKg.trim() !== '' && !Number.isNaN(Number(batchFruit2WeightKg))
+        ? Math.max(0, Number(batchFruit2WeightKg))
+        : null;
     const parsedBrix =
       batchBrix.trim() !== '' && !Number.isNaN(Number(batchBrix))
         ? Math.max(0, Number(batchBrix))
@@ -487,6 +621,31 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
           nextFruitCount = Math.max(1, p.fruitCount);
         }
 
+        let nextFruitWeights = p.fruitWeights ? [...p.fruitWeights] : undefined;
+        let nextEstWeightKg = parsedWeight !== null ? parsedWeight : p.estWeightKg;
+
+        if (nextFruitCount === 2 && (parsedFruit1W !== null || parsedFruit2W !== null)) {
+          const existing = getFruitWeights(p);
+          const w1 = parsedFruit1W !== null ? parsedFruit1W : existing[0] ?? 0;
+          const w2 = parsedFruit2W !== null ? parsedFruit2W : existing[1] ?? 0;
+          nextFruitWeights = [w1, w2];
+          nextEstWeightKg = Number((w1 + w2).toFixed(2));
+        } else if (parsedFruitCount !== null) {
+          if (parsedWeight !== null) {
+            nextFruitWeights = nextFruitCount === 1 ? [parsedWeight] : nextFruitWeights;
+          } else {
+            const adjusted = adjustWeightsForCount(
+              getFruitWeights(p),
+              nextFruitCount,
+              p.estWeightKg
+            );
+            nextFruitWeights = adjusted.fruitWeights;
+            nextEstWeightKg = adjusted.estWeightKg;
+          }
+        } else if (parsedWeight !== null && nextFruitCount === 1) {
+          nextFruitWeights = [parsedWeight];
+        }
+
         return {
           ...p,
           status: nextStatus,
@@ -494,7 +653,8 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
           fruitQuality: nextQuality,
           fruitCount: nextFruitCount,
           heightCm: parsedHeight !== null ? parsedHeight : p.heightCm,
-          estWeightKg: parsedWeight !== null ? parsedWeight : p.estWeightKg,
+          estWeightKg: nextEstWeightKg,
+          ...(nextFruitWeights !== undefined ? { fruitWeights: nextFruitWeights } : {}),
           brix: parsedBrix !== null ? parsedBrix : p.brix,
           symptom: batchSymptom.trim() || p.symptom,
           lastAction: batchAction.trim() || p.lastAction,
@@ -518,6 +678,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     heightCm: 0,
     fruitCount: 0,
     estWeightKg: 0,
+    fruitWeights: [],
     brix: 0,
     lastAction: 'Dihapus manual',
     notes: '',
@@ -573,6 +734,29 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       return FRUIT_QUALITY_META[getFruitQuality(plant)].cellBg;
     }
     return PLANT_STATUS_META[plant.status].cellBg;
+  };
+
+  const getPlantConditionDot = (
+    plant: PlantCondition
+  ): { color: string; title: string } | null => {
+    const fruiting = getFruiting(plant);
+    const quality = getFruitQuality(plant);
+    const healthMeta = PLANT_STATUS_META[plant.status];
+
+    if (colorMode === 'health') {
+      if (plant.status === 'kosong') return null;
+      if (fruiting === 'berbuah') {
+        return quality === 'jelek'
+          ? { color: '#FB7185', title: `Kondisi Buah: Jelek (${plant.fruitCount || 1} buah)` }
+          : { color: '#4ADE80', title: `Kondisi Buah: Bagus (${plant.fruitCount || 1} buah)` };
+      }
+      return { color: '#FBBF24', title: 'Status: Tidak Berbuah' };
+    }
+
+    return {
+      color: healthMeta.cellBg,
+      title: `Kesehatan: ${healthMeta.short}`,
+    };
   };
 
   return (
@@ -798,20 +982,29 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                 </label>
                 <div className="flex items-center gap-1.5">
                   <input
+                    ref={avgWeightInputRef}
                     id="avg-melon-weight-input"
-                    type="number"
-                    step="0.05"
-                    min={0}
-                    max={50}
+                    type="text"
+                    inputMode="decimal"
                     placeholder="0"
                     value={avgWeightInput}
-                    onFocus={(e) => {
-                      if (e.currentTarget.value === '0') e.currentTarget.select();
+                    onFocus={() => {
+                      if (avgWeightInput === '0') setAvgWeightInput('');
+                    }}
+                    onBlur={() => {
+                      if (avgWeightInput.trim() === '' || avgWeightInput === '.') {
+                        setAvgWeightInput(String(gh.avgMelonWeightKg ?? 0));
+                      } else {
+                        const parsed = Number(avgWeightInput);
+                        if (!Number.isNaN(parsed)) {
+                          setAvgWeightInput(String(Math.min(50, Math.max(0, Number(parsed.toFixed(2))))));
+                        }
+                      }
                     }}
                     onChange={(e) => {
-                      const raw = e.target.value;
+                      const raw = sanitizeDecimalDraft(e.target.value);
                       setAvgWeightInput(raw);
-                      if (raw.trim() === '') {
+                      if (raw.trim() === '' || raw === '.') {
                         lastAvgExtRef.current = 0;
                         onUpdateGh((prev) => ({ ...prev, avgMelonWeightKg: 0 }));
                         return;
@@ -839,7 +1032,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                         setAvgWeightInput(String(rounded));
                         onUpdateGh((prev) => ({ ...prev, avgMelonWeightKg: rounded }));
                       }}
-                      title={`Gunakan rata-rata dari ${weightMetrics.sampledCount} sampel pohon (${weightMetrics.sampleAvgKg.toFixed(2)} kg)`}
+                      title={`Gunakan rata-rata dari ${weightMetrics.sampledFruitCount} sampel buah (${weightMetrics.sampleAvgKg.toFixed(2)} kg/buah)`}
                       className="h-9 rounded-lg border px-2.5 text-[11px] font-semibold whitespace-nowrap cursor-pointer"
                       style={{
                         borderColor: 'var(--app-border)',
@@ -868,7 +1061,10 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                   {weightMetrics.totalFruits.toLocaleString('id-ID')} buah
                 </div>
                 <div className="text-[10px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
-                  {weightMetrics.fruitingActiveCount.toLocaleString('id-ID')} pohon berbuah
+                  {weightMetrics.fruitingActiveCount.toLocaleString('id-ID')} phn
+                  {weightMetrics.twoFruitCount > 0
+                    ? ` (${weightMetrics.twoFruitCount} berbuah 2)`
+                    : ' berbuah'}
                 </div>
               </div>
 
@@ -1026,7 +1222,8 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
         {/* Matrix Viewport */}
         <section
-          className="rounded-xl border p-4 sm:p-5 xl:col-span-8"
+          ref={matrixTopRef}
+          className="rounded-xl border p-4 sm:p-5 xl:col-span-8 scroll-mt-24"
           style={{
             backgroundColor: 'var(--app-surface)',
             borderColor: 'var(--app-border)',
@@ -1450,9 +1647,42 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                 type="button"
                 disabled={quickTargetCount === 0}
                 onClick={() =>
+                  applyQuickBulkUpdate('Berbuah 2', (p) => {
+                    const adjusted = adjustWeightsForCount(
+                      getFruitWeights(p),
+                      2,
+                      p.estWeightKg
+                    );
+                    return {
+                      fruitingStatus: 'berbuah',
+                      fruitCount: 2,
+                      fruitWeights: adjusted.fruitWeights,
+                      estWeightKg: adjusted.estWeightKg,
+                    };
+                  })
+                }
+                className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-semibold cursor-pointer disabled:opacity-40"
+                style={{
+                  borderColor: FRUITING_STATUS_META.berbuah.cellBg,
+                  backgroundColor: 'var(--app-surface)',
+                  color: 'var(--app-accent)',
+                }}
+              >
+                <Apple className="h-3.5 w-3.5" />
+                {quickTargetCount === gh.plants.length
+                  ? 'Semua Berbuah 2'
+                  : `Berbuah 2 (${quickTargetCount})`}
+              </button>
+
+              <button
+                type="button"
+                disabled={quickTargetCount === 0}
+                onClick={() =>
                   applyQuickBulkUpdate('Semua Tidak Berbuah', () => ({
                     fruitingStatus: 'tidak_berbuah',
                     fruitCount: 0,
+                    fruitWeights: [],
+                    estWeightKg: 0,
                   }))
                 }
                 className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-semibold cursor-pointer disabled:opacity-40"
@@ -1732,13 +1962,40 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-medium mb-1">Jumlah Buah</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-medium">Jumlah Buah</label>
+                    <div className="flex items-center gap-1">
+                      {[1, 2].map((qty) => (
+                        <button
+                          key={qty}
+                          type="button"
+                          onClick={() => setBatchFruitCount(String(qty))}
+                          className="rounded border px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer"
+                          style={{
+                            borderColor:
+                              batchFruitCount === String(qty)
+                                ? 'var(--app-accent)'
+                                : 'var(--app-border)',
+                            backgroundColor:
+                              batchFruitCount === String(qty)
+                                ? 'var(--app-accent-soft)'
+                                : 'var(--app-surface)',
+                            color:
+                              batchFruitCount === String(qty)
+                                ? 'var(--app-accent)'
+                                : 'var(--app-text-muted)',
+                          }}
+                        >
+                          {qty}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <input
-                    type="number"
-                    min={0}
-                    max={20}
+                    type="text"
+                    inputMode="numeric"
                     value={batchFruitCount}
-                    onChange={(e) => setBatchFruitCount(e.target.value)}
+                    onChange={(e) => setBatchFruitCount(sanitizeIntDraft(e.target.value))}
                     placeholder="Tidak diubah"
                     className="w-full rounded-md border px-2.5 py-1.5 text-xs font-mono-tabular"
                     style={{
@@ -1751,11 +2008,10 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                 <div>
                   <label className="block text-[11px] font-medium mb-1">Tinggi Sulur (cm)</label>
                   <input
-                    type="number"
-                    min={0}
-                    max={500}
+                    type="text"
+                    inputMode="decimal"
                     value={batchHeightCm}
-                    onChange={(e) => setBatchHeightCm(e.target.value)}
+                    onChange={(e) => setBatchHeightCm(sanitizeDecimalDraft(e.target.value))}
                     placeholder="Tidak diubah"
                     className="w-full rounded-md border px-2.5 py-1.5 text-xs font-mono-tabular"
                     style={{
@@ -1765,24 +2021,67 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                     }}
                   />
                 </div>
-                <div>
-                  <label className="block text-[11px] font-medium mb-1">Est. Bobot (kg)</label>
-                  <input
-                    type="number"
-                    step="0.05"
-                    min={0}
-                    max={10}
-                    value={batchEstWeightKg}
-                    onChange={(e) => setBatchEstWeightKg(e.target.value)}
-                    placeholder="Tidak diubah"
-                    className="w-full rounded-md border px-2.5 py-1.5 text-xs font-mono-tabular"
-                    style={{
-                      borderColor: 'var(--app-border)',
-                      backgroundColor: 'var(--app-surface)',
-                      color: 'var(--app-text)',
-                    }}
-                  />
-                </div>
+                {batchFruitCount === '2' ? (
+                  <>
+                    <div>
+                      <label className="block text-[11px] font-medium mb-1">
+                        Bobot Buah 1 (kg)
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={batchFruit1WeightKg}
+                        onChange={(e) =>
+                          setBatchFruit1WeightKg(sanitizeDecimalDraft(e.target.value))
+                        }
+                        placeholder="Opsional (kg)"
+                        className="w-full rounded-md border px-2.5 py-1.5 text-xs font-mono-tabular"
+                        style={{
+                          borderColor: 'var(--app-border)',
+                          backgroundColor: 'var(--app-surface)',
+                          color: 'var(--app-text)',
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium mb-1">
+                        Bobot Buah 2 (kg)
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={batchFruit2WeightKg}
+                        onChange={(e) =>
+                          setBatchFruit2WeightKg(sanitizeDecimalDraft(e.target.value))
+                        }
+                        placeholder="Opsional (kg)"
+                        className="w-full rounded-md border px-2.5 py-1.5 text-xs font-mono-tabular"
+                        style={{
+                          borderColor: 'var(--app-border)',
+                          backgroundColor: 'var(--app-surface)',
+                          color: 'var(--app-text)',
+                        }}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div>
+                    <label className="block text-[11px] font-medium mb-1">Est. Bobot (kg)</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={batchEstWeightKg}
+                      onChange={(e) => setBatchEstWeightKg(sanitizeDecimalDraft(e.target.value))}
+                      placeholder="Tidak diubah"
+                      className="w-full rounded-md border px-2.5 py-1.5 text-xs font-mono-tabular"
+                      style={{
+                        borderColor: 'var(--app-border)',
+                        backgroundColor: 'var(--app-surface)',
+                        color: 'var(--app-text)',
+                      }}
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="block text-[11px] font-medium mb-1">Kadar Brix (%)</label>
                   <input
@@ -1920,25 +2219,47 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
             <div className="flex flex-wrap items-center gap-3" style={{ color: 'var(--app-text-muted)' }}>
               {colorMode === 'health' ? (
-                (Object.keys(PLANT_STATUS_META) as PlantHealthStatus[]).map((k) => (
-                  <span key={k} className="inline-flex items-center gap-1.5">
-                    <span
-                      className="inline-block h-2.5 w-2.5 rounded-sm"
-                      style={{ backgroundColor: PLANT_STATUS_META[k].cellBg }}
-                    />
-                    <span>{PLANT_STATUS_META[k].short}</span>
+                <>
+                  {(Object.keys(PLANT_STATUS_META) as PlantHealthStatus[]).map((k) => (
+                    <span key={k} className="inline-flex items-center gap-1.5">
+                      <span
+                        className="inline-block h-2.5 w-2.5 rounded-sm"
+                        style={{ backgroundColor: PLANT_STATUS_META[k].cellBg }}
+                      />
+                      <span>{PLANT_STATUS_META[k].short}</span>
+                    </span>
+                  ))}
+                  <span className="inline-flex items-center gap-1.5 pl-1 border-l" style={{ borderColor: 'var(--app-border)' }}>
+                    <span>Titik:</span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded-full border border-slate-400/60" style={{ backgroundColor: '#4ADE80' }} />
+                      <span>Bagus</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded-full border border-slate-400/60" style={{ backgroundColor: '#FB7185' }} />
+                      <span>Jelek</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded-full border border-slate-400/60" style={{ backgroundColor: '#FBBF24' }} />
+                      <span>Tdk Berbuah</span>
+                    </span>
                   </span>
-                ))
+                </>
               ) : colorMode === 'fruiting' ? (
-                (['berbuah', 'tidak_berbuah'] as FruitingStatus[]).map((k) => (
-                  <span key={k} className="inline-flex items-center gap-1.5">
-                    <span
-                      className="inline-block h-2.5 w-2.5 rounded-sm"
-                      style={{ backgroundColor: FRUITING_STATUS_META[k].cellBg }}
-                    />
-                    <span>{FRUITING_STATUS_META[k].short}</span>
+                <>
+                  {(['berbuah', 'tidak_berbuah'] as FruitingStatus[]).map((k) => (
+                    <span key={k} className="inline-flex items-center gap-1.5">
+                      <span
+                        className="inline-block h-2.5 w-2.5 rounded-sm"
+                        style={{ backgroundColor: FRUITING_STATUS_META[k].cellBg }}
+                      />
+                      <span>{FRUITING_STATUS_META[k].short}</span>
+                    </span>
+                  ))}
+                  <span className="inline-flex items-center gap-1.5 pl-1 border-l" style={{ borderColor: 'var(--app-border)' }}>
+                    <span>Titik = Kesehatan</span>
                   </span>
-                ))
+                </>
               ) : (
                 <>
                   {(['bagus', 'jelek'] as FruitQuality[]).map((k) => (
@@ -1963,6 +2284,9 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                       style={{ backgroundColor: PLANT_STATUS_META.kosong.cellBg }}
                     />
                     <span>Kosong</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 pl-1 border-l" style={{ borderColor: 'var(--app-border)' }}>
+                    <span>Titik = Kesehatan</span>
                   </span>
                 </>
               )}
@@ -2001,6 +2325,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                 const fruiting = getFruiting(plant);
                 const isSelected = plant.id === selectedId;
                 const isMultiChecked = selectedPlantIds.includes(plant.id);
+                const dotMeta = getPlantConditionDot(plant);
                 return (
                   <button
                     key={plant.id}
@@ -2008,7 +2333,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                     onClick={() =>
                       multiSelectMode
                         ? toggleMultiSelectPlant(plant.id)
-                        : handleSelectPlant(plant.id)
+                        : handleSelectPlant(plant.id, true)
                     }
                     onMouseEnter={() => setHoveredPlant(plant)}
                     onMouseLeave={() => setHoveredPlant(null)}
@@ -2023,7 +2348,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                         : 'none',
                       outlineOffset: isMultiChecked || isSelected ? '1px' : '0px',
                     }}
-                    title={`Tanaman #${plant.id} — ${meta.label} · ${FRUITING_STATUS_META[fruiting].short}`}
+                    title={`Klik untuk inspeksi manual Tanaman #${plant.id} — ${meta.label} · ${FRUITING_STATUS_META[fruiting].short}`}
                   >
                     <span>{plant.id}</span>
                     {isMultiChecked && (
@@ -2034,10 +2359,11 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                         ✓
                       </span>
                     )}
-                    {colorMode === 'health' && fruiting === 'berbuah' && (
+                    {dotMeta && (
                       <span
-                        className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-white/90"
-                        title="Berbuah"
+                        className="absolute top-1 right-1 h-2 w-2 rounded-full border border-white shadow-xs"
+                        style={{ backgroundColor: dotMeta.color }}
+                        title={dotMeta.title}
                       />
                     )}
                   </button>
@@ -2057,6 +2383,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                 const fruiting = getFruiting(plant);
                 const isSelected = plant.id === selectedId;
                 const isMultiChecked = selectedPlantIds.includes(plant.id);
+                const dotMeta = getPlantConditionDot(plant);
                 return (
                   <button
                     key={plant.id}
@@ -2064,11 +2391,11 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                     onClick={() =>
                       multiSelectMode
                         ? toggleMultiSelectPlant(plant.id)
-                        : handleSelectPlant(plant.id)
+                        : handleSelectPlant(plant.id, true)
                     }
                     onMouseEnter={() => setHoveredPlant(plant)}
                     onMouseLeave={() => setHoveredPlant(null)}
-                    className="h-5 sm:h-4 w-full rounded-[3px] transition-transform hover:scale-125 cursor-pointer"
+                    className="relative h-5 sm:h-4 w-full rounded-[3px] transition-transform hover:scale-125 cursor-pointer"
                     style={{
                       backgroundColor: getCellColor(plant),
                       outline: isMultiChecked
@@ -2080,7 +2407,14 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                     }}
                     aria-label={`Tanaman ${plant.id} ${meta.label} ${FRUITING_STATUS_META[fruiting].short}`}
                     title={`#${plant.id} · ${meta.short} · ${FRUITING_STATUS_META[fruiting].short}`}
-                  />
+                  >
+                    {dotMeta && (
+                      <span
+                        className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full border border-white/90"
+                        style={{ backgroundColor: dotMeta.color }}
+                      />
+                    )}
+                  </button>
                 );
               })}
             </div>
@@ -2095,11 +2429,17 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                 backgroundColor: 'var(--app-surface-muted)',
               }}
             >
-              <span className="font-mono-tabular font-semibold truncate">
-                Dipilih: #{selectedPlant.id} · {PLANT_STATUS_META[selectedPlant.status].short} ·{' '}
-                {getFruiting(selectedPlant) === 'berbuah'
-                  ? `Berbuah (${FRUIT_QUALITY_META[getFruitQuality(selectedPlant)].short})`
-                  : FRUITING_STATUS_META.tidak_berbuah.short}
+              <span className="inline-flex items-center gap-1.5 font-mono-tabular font-semibold truncate">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full shrink-0 border border-white/80"
+                  style={{ backgroundColor: PLANT_STATUS_META[selectedPlant.status].cellBg }}
+                />
+                <span className="truncate">
+                  Dipilih: #{selectedPlant.id} · {PLANT_STATUS_META[selectedPlant.status].short} ·{' '}
+                  {getFruiting(selectedPlant) === 'berbuah'
+                    ? `Berbuah (${FRUIT_QUALITY_META[getFruitQuality(selectedPlant)].short})`
+                    : FRUITING_STATUS_META.tidak_berbuah.short}
+                </span>
               </span>
               <button
                 type="button"
@@ -2122,25 +2462,53 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
         {/* Right: Single Plant Detail & Manual Editor (4 cols) */}
         <section
           ref={inspectorRef}
-          className="rounded-xl border p-4 sm:p-5 xl:col-span-4 h-fit scroll-mt-24"
+          className={`rounded-xl border p-4 sm:p-5 xl:col-span-4 h-fit scroll-mt-24 transition-shadow ${
+            inspectorPulse ? 'ring-2 ring-[var(--app-accent)] shadow-lg' : ''
+          }`}
           style={{
             backgroundColor: 'var(--app-surface)',
-            borderColor: 'var(--app-border)',
+            borderColor: inspectorPulse ? 'var(--app-accent)' : 'var(--app-border)',
           }}
         >
           {selectedPlant ? (
             <div className="space-y-4">
               {/* Header with Prev/Next */}
-              <div className="flex items-center justify-between pb-3 border-b" style={{ borderColor: 'var(--app-border)' }}>
-                <div>
+              <div className="flex items-center justify-between gap-2 pb-3 border-b" style={{ borderColor: 'var(--app-border)' }}>
+                <div className="min-w-0">
                   <div className="text-xs" style={{ color: 'var(--app-text-muted)' }}>
                     Inspeksi Manual {gh.name}
                   </div>
-                  <h3 className="text-lg font-bold font-mono-tabular">
-                    Tanaman #{selectedPlant.id}
-                  </h3>
+                  <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                    <span
+                      className="inline-block h-3 w-3 rounded-full shrink-0 border border-white/80 shadow-xs"
+                      style={{ backgroundColor: PLANT_STATUS_META[selectedPlant.status].cellBg }}
+                      title={`Kondisi Tanaman: ${PLANT_STATUS_META[selectedPlant.status].label}`}
+                    />
+                    <h3 className="text-lg font-bold font-mono-tabular">
+                      Tanaman #{selectedPlant.id}
+                    </h3>
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                        PLANT_STATUS_META[selectedPlant.status].textBadge
+                      }`}
+                    >
+                      {PLANT_STATUS_META[selectedPlant.status].short}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      matrixTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    }
+                    className="xl:hidden inline-flex h-9 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium cursor-pointer"
+                    style={{ borderColor: 'var(--app-border)' }}
+                    title="Kembali ke Peta Nomor Tanaman"
+                  >
+                    <ArrowUp className="h-3.5 w-3.5" />
+                    <span>Peta</span>
+                  </button>
                   <button
                     type="button"
                     disabled={selectedPlant.id <= 1}
@@ -2289,17 +2657,31 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                         <button
                           key={fKey}
                           type="button"
-                          onClick={() =>
-                            updateSinglePlant(selectedPlant.id, {
-                              fruitingStatus: fKey,
-                              fruitCount:
-                                fKey === 'berbuah'
-                                  ? Math.max(1, selectedPlant.fruitCount)
-                                  : 0,
-                              fruitQuality:
-                                fKey === 'berbuah' ? getFruitQuality(selectedPlant) : 'bagus',
-                            })
-                          }
+                          onClick={() => {
+                            if (fKey === 'berbuah') {
+                              const nextCount = Math.max(1, selectedPlant.fruitCount);
+                              const adjusted = adjustWeightsForCount(
+                                getFruitWeights(selectedPlant),
+                                nextCount,
+                                selectedPlant.estWeightKg
+                              );
+                              updateSinglePlant(selectedPlant.id, {
+                                fruitingStatus: 'berbuah',
+                                fruitCount: nextCount,
+                                fruitWeights: adjusted.fruitWeights,
+                                estWeightKg: adjusted.estWeightKg,
+                                fruitQuality: getFruitQuality(selectedPlant),
+                              });
+                            } else {
+                              updateSinglePlant(selectedPlant.id, {
+                                fruitingStatus: 'tidak_berbuah',
+                                fruitCount: 0,
+                                fruitWeights: [],
+                                estWeightKg: 0,
+                                fruitQuality: 'bagus',
+                              });
+                            }
+                          }}
                           className="flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors cursor-pointer"
                           style={{
                             borderColor: active ? meta.cellBg : 'var(--app-border)',
@@ -2335,13 +2717,21 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                         <button
                           key={qKey}
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
+                            const nextCount = Math.max(1, selectedPlant.fruitCount);
+                            const adjusted = adjustWeightsForCount(
+                              getFruitWeights(selectedPlant),
+                              nextCount,
+                              selectedPlant.estWeightKg
+                            );
                             updateSinglePlant(selectedPlant.id, {
                               fruitingStatus: 'berbuah',
-                              fruitCount: Math.max(1, selectedPlant.fruitCount),
+                              fruitCount: nextCount,
+                              fruitWeights: adjusted.fruitWeights,
+                              estWeightKg: adjusted.estWeightKg,
                               fruitQuality: qKey,
-                            })
-                          }
+                            });
+                          }}
                           className="flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors cursor-pointer"
                           style={{
                             borderColor: active ? qMeta.cellBg : 'var(--app-border)',
@@ -2360,32 +2750,272 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                     })}
                   </div>
                 </div>
+
+                {/* Quick Fruit Count Selector: 1 Buah / 2 Buah */}
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <label className="block text-xs font-medium">
+                      Jumlah Buah per Pohon
+                    </label>
+                    <span className="text-[10px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                      {selectedPlant.fruitCount > 0
+                        ? `${selectedPlant.fruitCount} buah · ${selectedPlant.estWeightKg.toLocaleString('id-ID', {
+                            maximumFractionDigits: 2,
+                          })} kg`
+                        : '0 buah'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[1, 2].map((qty) => {
+                      const active =
+                        getFruiting(selectedPlant) === 'berbuah' &&
+                        selectedPlant.fruitCount === qty;
+                      return (
+                        <button
+                          key={qty}
+                          type="button"
+                          onClick={() => {
+                            const adjusted = adjustWeightsForCount(
+                              getFruitWeights(selectedPlant),
+                              qty,
+                              selectedPlant.estWeightKg
+                            );
+                            if (lastExternalNumRef.current) {
+                              lastExternalNumRef.current.fruitCount = qty;
+                              lastExternalNumRef.current.estWeightKg = adjusted.estWeightKg;
+                              lastExternalNumRef.current.fruitWeightsSig =
+                                adjusted.fruitWeights.join('|');
+                            }
+                            setFruitCountInput(String(qty));
+                            setWeightInput(String(adjusted.estWeightKg));
+                            setFruitWeightInputs(adjusted.fruitWeights.map((w) => String(w)));
+                            updateSinglePlant(selectedPlant.id, {
+                              fruitingStatus: 'berbuah',
+                              fruitCount: qty,
+                              fruitWeights: adjusted.fruitWeights,
+                              estWeightKg: adjusted.estWeightKg,
+                              fruitQuality: getFruitQuality(selectedPlant),
+                            });
+                          }}
+                          className="flex items-center justify-center gap-1 rounded-lg border px-2.5 py-2 text-xs font-semibold transition-colors cursor-pointer"
+                          style={{
+                            borderColor: active ? 'var(--app-accent)' : 'var(--app-border)',
+                            backgroundColor: active ? 'var(--app-accent)' : 'var(--app-canvas)',
+                            color: active ? 'var(--app-accent-fg)' : 'var(--app-text)',
+                          }}
+                        >
+                          <span>{qty} Buah</span>
+                        </button>
+                      );
+                    })}
+                    <input
+                      ref={fruitCountInputRef}
+                      type="text"
+                      inputMode="numeric"
+                      aria-label="Jumlah Buah Manual"
+                      placeholder="0"
+                      value={fruitCountInput}
+                      onFocus={() => {
+                        if (fruitCountInput === '0') setFruitCountInput('');
+                      }}
+                      onBlur={() => {
+                        if (fruitCountInput.trim() === '') {
+                          setFruitCountInput(String(selectedPlant.fruitCount));
+                        }
+                      }}
+                      onChange={(e) => {
+                        const raw = sanitizeIntDraft(e.target.value);
+                        setFruitCountInput(raw);
+                        if (raw.trim() === '') {
+                          if (lastExternalNumRef.current) {
+                            lastExternalNumRef.current.fruitCount = 0;
+                            lastExternalNumRef.current.estWeightKg = 0;
+                            lastExternalNumRef.current.fruitWeightsSig = '';
+                          }
+                          setFruitWeightInputs([]);
+                          setWeightInput('0');
+                          updateSinglePlant(selectedPlant.id, {
+                            fruitCount: 0,
+                            fruitingStatus: 'tidak_berbuah',
+                            fruitWeights: [],
+                            estWeightKg: 0,
+                          });
+                          return;
+                        }
+                        const num = parseInt(raw, 10);
+                        if (!Number.isNaN(num)) {
+                          const clamped = Math.min(20, Math.max(0, num));
+                          const adjusted = adjustWeightsForCount(
+                            getFruitWeights(selectedPlant),
+                            clamped,
+                            selectedPlant.estWeightKg
+                          );
+                          if (lastExternalNumRef.current) {
+                            lastExternalNumRef.current.fruitCount = clamped;
+                            lastExternalNumRef.current.estWeightKg = adjusted.estWeightKg;
+                            lastExternalNumRef.current.fruitWeightsSig =
+                              adjusted.fruitWeights.join('|');
+                          }
+                          setWeightInput(String(adjusted.estWeightKg));
+                          setFruitWeightInputs(adjusted.fruitWeights.map((w) => String(w)));
+                          updateSinglePlant(selectedPlant.id, {
+                            fruitCount: clamped,
+                            fruitingStatus: clamped > 0 ? 'berbuah' : 'tidak_berbuah',
+                            fruitWeights: adjusted.fruitWeights,
+                            estWeightKg: adjusted.estWeightKg,
+                          });
+                        }
+                      }}
+                      className="w-full rounded-lg border px-2.5 py-2 text-center text-xs font-bold font-mono-tabular focus:outline-none"
+                      style={{
+                        borderColor: 'var(--app-border)',
+                        backgroundColor: 'var(--app-canvas)',
+                        color: 'var(--app-text)',
+                      }}
+                    />
+                  </div>
+                </div>
               </div>
+
+              {/* Per-Fruit Weight Inputs when Berbuah >= 2, else Single Weight + Height + Brix */}
+              {selectedPlant.fruitCount >= 2 ? (
+                <div
+                  className="rounded-lg border p-3 space-y-2.5"
+                  style={{
+                    borderColor: 'var(--app-accent)',
+                    backgroundColor: 'var(--app-accent-soft)',
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold" style={{ color: 'var(--app-accent)' }}>
+                      Bobot Masing-Masing Buah ({selectedPlant.fruitCount} Buah)
+                    </span>
+                    <span className="text-xs font-bold font-mono-tabular" style={{ color: 'var(--app-accent)' }}>
+                      Total: {selectedPlant.estWeightKg.toLocaleString('id-ID', { maximumFractionDigits: 2 })} kg
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {Array.from({ length: Math.min(5, selectedPlant.fruitCount) }).map((_, idx) => {
+                      const draftVal = fruitWeightInputs[idx] ?? '0';
+                      return (
+                        <div key={idx}>
+                          <label className="block text-[11px] font-medium mb-1">
+                            Bobot Buah {idx + 1} (kg)
+                          </label>
+                          <input
+                            ref={(el) => {
+                              fruitWeightInputRefs.current[idx] = el;
+                            }}
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="0"
+                            value={draftVal}
+                            onFocus={() => {
+                              if (draftVal === '0') {
+                                setFruitWeightInputs((prev) => {
+                                  const next = [...prev];
+                                  next[idx] = '';
+                                  return next;
+                                });
+                              }
+                            }}
+                            onBlur={() => {
+                              setFruitWeightInputs((prev) => {
+                                const next = [...prev];
+                                const cur = (next[idx] || '').trim();
+                                const weights = getFruitWeights(selectedPlant);
+                                if (cur === '' || cur === '.') {
+                                  next[idx] = String(weights[idx] ?? 0);
+                                } else {
+                                  const n = Number(cur);
+                                  next[idx] = !Number.isNaN(n) ? String(Math.max(0, n)) : '0';
+                                }
+                                return next;
+                              });
+                            }}
+                            onChange={(e) => {
+                              const raw = sanitizeDecimalDraft(e.target.value);
+                              setFruitWeightInputs((prev) => {
+                                const next = [...prev];
+                                next[idx] = raw;
+                                return next;
+                              });
+
+                              const currentWeights = adjustWeightsForCount(
+                                getFruitWeights(selectedPlant),
+                                selectedPlant.fruitCount,
+                                selectedPlant.estWeightKg
+                              ).fruitWeights;
+
+                              if (raw.trim() === '' || raw === '.') {
+                                currentWeights[idx] = 0;
+                              } else {
+                                const parsed = Number(raw);
+                                if (Number.isNaN(parsed)) return;
+                                currentWeights[idx] = Math.min(20, Math.max(0, parsed));
+                              }
+
+                              const totalKg = Number(
+                                currentWeights.reduce((a, b) => a + b, 0).toFixed(2)
+                              );
+                              if (lastExternalNumRef.current) {
+                                lastExternalNumRef.current.estWeightKg = totalKg;
+                                lastExternalNumRef.current.fruitWeightsSig =
+                                  currentWeights.slice(0, 5).join('|');
+                              }
+                              setWeightInput(String(totalKg));
+                              updateSinglePlant(selectedPlant.id, {
+                                fruitingStatus: 'berbuah',
+                                fruitWeights: currentWeights,
+                                estWeightKg: totalKg,
+                              });
+                            }}
+                            className="w-full rounded-lg border px-3 py-2 text-sm font-mono-tabular focus:outline-none"
+                            style={{
+                              borderColor: 'var(--app-border)',
+                              backgroundColor: 'var(--app-surface)',
+                              color: 'var(--app-text)',
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
 
               {/* Manual Numeric Fields */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium mb-1">Tinggi Sulur (cm)</label>
                   <input
-                    type="number"
-                    min={0}
-                    max={500}
+                    ref={heightInputRef}
+                    type="text"
+                    inputMode="decimal"
                     placeholder="0"
                     value={heightInput}
-                    onFocus={(e) => {
-                      if (e.currentTarget.value === '0') e.currentTarget.select();
+                    onFocus={() => {
+                      if (heightInput === '0') setHeightInput('');
+                    }}
+                    onBlur={() => {
+                      if (heightInput.trim() === '' || heightInput === '.') {
+                        setHeightInput(String(selectedPlant.heightCm));
+                      } else {
+                        const n = Number(heightInput);
+                        if (!Number.isNaN(n)) setHeightInput(String(Math.max(0, n)));
+                      }
                     }}
                     onChange={(e) => {
-                      const raw = e.target.value;
+                      const raw = sanitizeDecimalDraft(e.target.value);
                       setHeightInput(raw);
-                      if (raw.trim() === '') {
+                      if (raw.trim() === '' || raw === '.') {
                         if (lastExternalNumRef.current) lastExternalNumRef.current.heightCm = 0;
                         updateSinglePlant(selectedPlant.id, { heightCm: 0 });
                         return;
                       }
                       const num = Number(raw);
                       if (!Number.isNaN(num)) {
-                        const clamped = Math.max(0, num);
+                        const clamped = Math.min(500, Math.max(0, num));
                         if (lastExternalNumRef.current) lastExternalNumRef.current.heightCm = clamped;
                         updateSinglePlant(selectedPlant.id, { heightCm: clamped });
                       }
@@ -2398,104 +3028,93 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                     }}
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1">Jumlah Buah</label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={20}
-                    placeholder="0"
-                    value={fruitCountInput}
-                    onFocus={(e) => {
-                      if (e.currentTarget.value === '0') e.currentTarget.select();
-                    }}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      setFruitCountInput(raw);
-                      if (raw.trim() === '') {
-                        if (lastExternalNumRef.current) lastExternalNumRef.current.fruitCount = 0;
-                        updateSinglePlant(selectedPlant.id, {
-                          fruitCount: 0,
-                          fruitingStatus: 'tidak_berbuah',
-                        });
-                        return;
-                      }
-                      const num = Number(raw);
-                      if (!Number.isNaN(num)) {
-                        const clamped = Math.max(0, num);
-                        if (lastExternalNumRef.current) lastExternalNumRef.current.fruitCount = clamped;
-                        updateSinglePlant(selectedPlant.id, {
-                          fruitCount: clamped,
-                          fruitingStatus: clamped > 0 ? 'berbuah' : 'tidak_berbuah',
-                        });
-                      }
-                    }}
-                    className="w-full rounded-lg border px-3 py-2 text-sm font-mono-tabular focus:outline-none"
-                    style={{
-                      borderColor: 'var(--app-border)',
-                      backgroundColor: 'var(--app-canvas)',
-                      color: 'var(--app-text)',
-                    }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1">Est. Bobot (kg)</label>
-                  <input
-                    type="number"
-                    step="0.05"
-                    min={0}
-                    max={10}
-                    placeholder="0"
-                    value={weightInput}
-                    onFocus={(e) => {
-                      if (e.currentTarget.value === '0') e.currentTarget.select();
-                    }}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      setWeightInput(raw);
-                      if (raw.trim() === '') {
-                        if (lastExternalNumRef.current) lastExternalNumRef.current.estWeightKg = 0;
-                        updateSinglePlant(selectedPlant.id, { estWeightKg: 0 });
-                        return;
-                      }
-                      const num = Number(raw);
-                      if (!Number.isNaN(num)) {
-                        const clamped = Math.max(0, num);
-                        if (lastExternalNumRef.current) lastExternalNumRef.current.estWeightKg = clamped;
-                        updateSinglePlant(selectedPlant.id, { estWeightKg: clamped });
-                      }
-                    }}
-                    className="w-full rounded-lg border px-3 py-2 text-sm font-mono-tabular focus:outline-none"
-                    style={{
-                      borderColor: 'var(--app-border)',
-                      backgroundColor: 'var(--app-canvas)',
-                      color: 'var(--app-text)',
-                    }}
-                  />
-                </div>
-                <div>
+                {selectedPlant.fruitCount < 2 && (
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Est. Bobot Buah (kg)</label>
+                    <input
+                      ref={weightInputRef}
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={weightInput}
+                      onFocus={() => {
+                        if (weightInput === '0') setWeightInput('');
+                      }}
+                      onBlur={() => {
+                        if (weightInput.trim() === '' || weightInput === '.') {
+                          setWeightInput(String(selectedPlant.estWeightKg));
+                        } else {
+                          const n = Number(weightInput);
+                          if (!Number.isNaN(n)) setWeightInput(String(Math.max(0, n)));
+                        }
+                      }}
+                      onChange={(e) => {
+                        const raw = sanitizeDecimalDraft(e.target.value);
+                        setWeightInput(raw);
+                        if (raw.trim() === '' || raw === '.') {
+                          if (lastExternalNumRef.current) {
+                            lastExternalNumRef.current.estWeightKg = 0;
+                            lastExternalNumRef.current.fruitWeightsSig = '';
+                          }
+                          updateSinglePlant(selectedPlant.id, {
+                            estWeightKg: 0,
+                            fruitWeights: [],
+                          });
+                          return;
+                        }
+                        const num = Number(raw);
+                        if (!Number.isNaN(num)) {
+                          const clamped = Math.min(20, Math.max(0, num));
+                          if (lastExternalNumRef.current) {
+                            lastExternalNumRef.current.estWeightKg = clamped;
+                            lastExternalNumRef.current.fruitWeightsSig =
+                              clamped > 0 ? String(clamped) : '';
+                          }
+                          updateSinglePlant(selectedPlant.id, {
+                            estWeightKg: clamped,
+                            fruitWeights: clamped > 0 ? [clamped] : [],
+                          });
+                        }
+                      }}
+                      className="w-full rounded-lg border px-3 py-2 text-sm font-mono-tabular focus:outline-none"
+                      style={{
+                        borderColor: 'var(--app-border)',
+                        backgroundColor: 'var(--app-canvas)',
+                        color: 'var(--app-text)',
+                      }}
+                    />
+                  </div>
+                )}
+                <div className={selectedPlant.fruitCount >= 2 ? '' : 'col-span-2 sm:col-span-1'}>
                   <label className="block text-xs font-medium mb-1">Kadar Brix (%)</label>
                   <input
-                    type="number"
-                    step="0.1"
-                    min={0}
-                    max={25}
+                    ref={brixInputRef}
+                    type="text"
+                    inputMode="decimal"
                     placeholder="0"
                     value={brixInput}
-                    onFocus={(e) => {
-                      if (e.currentTarget.value === '0') e.currentTarget.select();
+                    onFocus={() => {
+                      if (brixInput === '0') setBrixInput('');
+                    }}
+                    onBlur={() => {
+                      if (brixInput.trim() === '' || brixInput === '.') {
+                        setBrixInput(String(selectedPlant.brix));
+                      } else {
+                        const n = Number(brixInput);
+                        if (!Number.isNaN(n)) setBrixInput(String(Math.max(0, n)));
+                      }
                     }}
                     onChange={(e) => {
-                      const raw = e.target.value;
+                      const raw = sanitizeDecimalDraft(e.target.value);
                       setBrixInput(raw);
-                      if (raw.trim() === '') {
+                      if (raw.trim() === '' || raw === '.') {
                         if (lastExternalNumRef.current) lastExternalNumRef.current.brix = 0;
                         updateSinglePlant(selectedPlant.id, { brix: 0 });
                         return;
                       }
                       const num = Number(raw);
                       if (!Number.isNaN(num)) {
-                        const clamped = Math.max(0, num);
+                        const clamped = Math.min(30, Math.max(0, num));
                         if (lastExternalNumRef.current) lastExternalNumRef.current.brix = clamped;
                         updateSinglePlant(selectedPlant.id, { brix: clamped });
                       }

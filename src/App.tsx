@@ -157,6 +157,22 @@ export default function App() {
   const pendingQueueRef = useRef(pendingQueue);
   pendingQueueRef.current = pendingQueue;
   const flushingRef = useRef(false);
+  const pendingDeltaMapRef = useRef<
+    Map<
+      string,
+      {
+        seasonId: string;
+        ghId: string;
+        prevGh: GreenhouseData;
+        nextGh: GreenhouseData;
+        user: User;
+        deviceLabel: string;
+        timer: number;
+      }
+    >
+  >(new Map());
+  const inFlightDeltaSeasonRef = useRef<Map<string, number>>(new Map());
+  const seasonEchoHoldUntilRef = useRef<Map<string, number>>(new Map());
 
   const pendingSyncCount =
     pendingQueue.upsertIds.length +
@@ -239,6 +255,66 @@ export default function App() {
       deleteIds: prev.deleteIds.includes(seasonId) ? prev.deleteIds : [...prev.deleteIds, seasonId],
     }));
   }, []);
+
+  const flushPendingDeltaForKey = useCallback(
+    (key: string) => {
+      const entry = pendingDeltaMapRef.current.get(key);
+      if (!entry) return;
+      window.clearTimeout(entry.timer);
+      pendingDeltaMapRef.current.delete(key);
+
+      const { seasonId, prevGh, nextGh, user, deviceLabel: label } = entry;
+      const prevCount = inFlightDeltaSeasonRef.current.get(seasonId) || 0;
+      inFlightDeltaSeasonRef.current.set(seasonId, prevCount + 1);
+
+      void syncGreenhouseDeltaToCloud({
+        user,
+        seasonId,
+        prevGh,
+        nextGh,
+        deviceLabel: label,
+      })
+        .then(() => {
+          seasonEchoHoldUntilRef.current.set(seasonId, Date.now() + 1800);
+        })
+        .catch(() => {
+          enqueueUpsertSeason(seasonId);
+        })
+        .finally(() => {
+          const curr = inFlightDeltaSeasonRef.current.get(seasonId) || 1;
+          if (curr <= 1) {
+            inFlightDeltaSeasonRef.current.delete(seasonId);
+          } else {
+            inFlightDeltaSeasonRef.current.set(seasonId, curr - 1);
+          }
+        });
+    },
+    [enqueueUpsertSeason]
+  );
+
+  const flushAllPendingDeltas = useCallback(() => {
+    for (const key of Array.from(pendingDeltaMapRef.current.keys())) {
+      flushPendingDeltaForKey(key);
+    }
+  }, [flushPendingDeltaForKey]);
+
+  useEffect(() => {
+    const handleVisibilityOrUnload = () => {
+      if (document.visibilityState === 'hidden') {
+        flushAllPendingDeltas();
+      }
+    };
+    const handleBeforeUnload = () => {
+      flushAllPendingDeltas();
+    };
+    document.addEventListener('visibilitychange', handleVisibilityOrUnload);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityOrUnload);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      flushAllPendingDeltas();
+    };
+  }, [flushAllPendingDeltas]);
 
   const flushPendingOfflineQueue = useCallback(async () => {
     if (!cloudUser || isEffectivelyOffline || flushingRef.current) return;
@@ -390,8 +466,19 @@ export default function App() {
       cloudUser.uid,
       activeCloudMeta,
       (hydratedSeason) => {
-        // Protect locally modified offline documents until pending queue flushes
-        if (pendingQueueRef.current.upsertIds.includes(hydratedSeason.id)) {
+        // Protect locally modified offline/pending documents & prevent cloud echo clobbering mid-typing
+        const hasPendingDelta = Array.from(pendingDeltaMapRef.current.values()).some(
+          (item) => item.seasonId === hydratedSeason.id
+        );
+        const hasInFlightDelta =
+          (inFlightDeltaSeasonRef.current.get(hydratedSeason.id) || 0) > 0;
+        const holdUntil = seasonEchoHoldUntilRef.current.get(hydratedSeason.id) || 0;
+        if (
+          pendingQueueRef.current.upsertIds.includes(hydratedSeason.id) ||
+          hasPendingDelta ||
+          hasInFlightDelta ||
+          Date.now() < holdUntil
+        ) {
           return;
         }
         setDocStore((prev) => ({
@@ -535,6 +622,7 @@ export default function App() {
   };
 
   const handleSignOutGoogle = async () => {
+    flushAllPendingDeltas();
     setSyncBusy(true);
     setSyncError('');
     try {
@@ -551,6 +639,9 @@ export default function App() {
   };
 
   const handleToggleManualOffline = () => {
+    if (!manualOfflineMode && isBrowserOnline && cloudUser) {
+      flushAllPendingDeltas();
+    }
     setManualOfflineMode((prev) => !prev);
     setSyncError('');
   };
@@ -561,6 +652,7 @@ export default function App() {
       setSyncError('Mode Offline aktif / tidak ada internet. Data tetap tersimpan aman di perangkat.');
       return;
     }
+    flushAllPendingDeltas();
     setSyncBusy(true);
     setSyncError('');
     try {
@@ -618,14 +710,21 @@ export default function App() {
   };
 
   const updateActiveGh = (updater: (gh: GreenhouseData) => GreenhouseData) => {
-    const currentSeason = activeDoc;
-    const prevGh = activeGh;
-    const nextGh = updater(prevGh);
+    const latestStore = docStoreRef.current;
+    const currentSeason =
+      latestStore.documents.find((d) => d.id === latestStore.activeDocId) ||
+      latestStore.documents[0];
+    if (!currentSeason) return;
+    const prevGh =
+      currentSeason.greenhouses.find((g) => g.id === currentSeason.activeGhId) ||
+      currentSeason.greenhouses[0];
+    if (!prevGh) return;
 
-    setDocStore((prev) => ({
-      ...prev,
-      documents: prev.documents.map((d) =>
-        d.id === prev.activeDocId
+    const nextGh = updater(prevGh);
+    const updatedStore = {
+      ...latestStore,
+      documents: latestStore.documents.map((d) =>
+        d.id === currentSeason.id
           ? {
               ...d,
               updatedAt: new Date().toISOString(),
@@ -633,26 +732,38 @@ export default function App() {
             }
           : d
       ),
-    }));
+    };
+    docStoreRef.current = updatedStore;
+    setDocStore(updatedStore);
 
     if (cloudUser) {
       if (isEffectivelyOffline) {
         enqueueUpsertSeason(currentSeason.id);
       } else {
-        void syncGreenhouseDeltaToCloud({
-          user: cloudUser,
+        const key = `${currentSeason.id}::${prevGh.id}`;
+        const existing = pendingDeltaMapRef.current.get(key);
+        if (existing) {
+          window.clearTimeout(existing.timer);
+        }
+        const timer = window.setTimeout(() => {
+          flushPendingDeltaForKey(key);
+        }, 480);
+        pendingDeltaMapRef.current.set(key, {
           seasonId: currentSeason.id,
-          prevGh,
+          ghId: prevGh.id,
+          prevGh: existing ? existing.prevGh : prevGh,
           nextGh,
+          user: cloudUser,
           deviceLabel,
-        }).catch(() => {
-          enqueueUpsertSeason(currentSeason.id);
+          timer,
         });
+        seasonEchoHoldUntilRef.current.set(currentSeason.id, Date.now() + 2500);
       }
     }
   };
 
   const handleSelectGh = (ghId: string) => {
+    flushAllPendingDeltas();
     const seasonId = activeDoc.id;
     updateActiveDoc((doc) => ({ ...doc, activeGhId: ghId }));
     if (cloudUser) {
@@ -853,6 +964,7 @@ export default function App() {
   };
 
   const handleSelectDocument = (docId: string) => {
+    flushAllPendingDeltas();
     setDocStore((prev) => ({ ...prev, activeDocId: docId }));
   };
 

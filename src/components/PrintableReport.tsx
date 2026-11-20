@@ -68,6 +68,7 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
 
   // Average melon weight & total harvest estimate
   let sampledCount = 0;
+  let sampledFruitCount = 0;
   let totalSampleKg = 0;
   let totalFruits = 0;
   let goodPlants = 0;
@@ -79,6 +80,11 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
     if (p.estWeightKg > 0) {
       sampledCount += 1;
       totalSampleKg += p.estWeightKg;
+      const posWeights = Array.isArray(p.fruitWeights)
+        ? p.fruitWeights.filter((w) => Number(w) > 0)
+        : [];
+      sampledFruitCount +=
+        posWeights.length > 0 ? posWeights.length : Math.max(1, p.fruitCount || 1);
     }
     const isFruit = p.fruitingStatus ? p.fruitingStatus === 'berbuah' : p.fruitCount > 0;
     if (isFruit) {
@@ -93,7 +99,7 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
       }
     }
   }
-  const sampleAvgKg = sampledCount > 0 ? totalSampleKg / sampledCount : 0;
+  const sampleAvgKg = sampledFruitCount > 0 ? totalSampleKg / sampledFruitCount : 0;
   const effectiveAvgKg =
     typeof activeGh.avgMelonWeightKg === 'number' && !Number.isNaN(activeGh.avgMelonWeightKg)
       ? activeGh.avgMelonWeightKg

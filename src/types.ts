@@ -189,6 +189,7 @@ export interface PlantCondition {
   heightCm: number;
   fruitCount: number;
   estWeightKg: number;
+  fruitWeights?: number[];
   brix: number;
   lastAction: string;
   notes: string;
