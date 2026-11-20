@@ -27,6 +27,7 @@ import {
   toLocalDateTimeInputValue,
 } from '../utils/dateUtils';
 import { OperatorField } from './OperatorField';
+import { WaterWeeklyStatsSection } from './WaterWeeklyStatsSection';
 
 function computeSuggestedPlantAgeHst(
   gh: GreenhouseData,
@@ -1696,6 +1697,15 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
               </div>
             )}
           </section>
+
+          {/* Statistik Mingguan Rata-Rata Kenaikan PPM & pH */}
+          <WaterWeeklyStatsSection
+            logs={gh.waterLogs}
+            targetPpmMin={effectivePpmMin}
+            targetPpmMax={effectivePpmMax}
+            targetPhMin={effectivePhMin}
+            targetPhMax={effectivePhMax}
+          />
 
           {/* Water Log Table */}
           <section
