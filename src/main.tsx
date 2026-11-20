@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 import App from './App.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import './index.css';
 
 const updateSW = registerSW({
@@ -15,4 +16,8 @@ const updateSW = registerSW({
 
 (window as unknown as { __melonflowUpdateSW?: (reload?: boolean) => Promise<void> }).__melonflowUpdateSW = updateSW;
 
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);

@@ -4,6 +4,11 @@ export type BotanicalThemeId =
   | 'hidroponik-malam'
   | 'embun-obsidian'
   | 'karbon-melon'
+  | 'lumut-grafit'
+  | 'indigo-tandon'
+  | 'zamrud-pekat'
+  | 'tembaga-arang'
+  | 'ametis-hidroponik'
   | 'tanah-bambu'
   | 'kabut-pagi';
 
@@ -13,7 +18,18 @@ export type FontOptionId =
   | 'bricolage'
   | 'manrope'
   | 'dmsans'
-  | 'lora';
+  | 'lora'
+  | 'inter'
+  | 'poppins'
+  | 'nunitosans'
+  | 'rubik'
+  | 'sora'
+  | 'spacegrotesk'
+  | 'figtree'
+  | 'worksans'
+  | 'ibmplex'
+  | 'lexend'
+  | 'merriweather';
 
 export type DashboardTab = 'water' | 'treatment' | 'plants' | 'accounting';
 

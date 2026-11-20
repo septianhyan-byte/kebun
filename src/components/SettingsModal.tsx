@@ -166,8 +166,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         >
           {(
             [
-              { id: 'tema', label: 'Tema Tanaman', icon: Palette },
-              { id: 'font', label: 'Jenis Huruf (6)', icon: Type },
+              { id: 'tema', label: `Tema Tanaman (${BOTANICAL_THEMES.length})`, icon: Palette },
+              { id: 'font', label: `Jenis Huruf (${FONT_OPTIONS.length})`, icon: Type },
               { id: 'warna', label: 'Warna Aksen', icon: Palette },
               { id: 'notifikasi', label: 'Pengatur Notifikasi', icon: Bell },
             ] as const
@@ -196,7 +196,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {section === 'tema' && (
             <div className="space-y-3">
               <div className="text-xs font-medium" style={{ color: 'var(--app-text-muted)' }}>
-                Pilih tema nuansa tanaman & rumah kaca hidroponik (4 tema terang & 3 tema gelap):
+                Pilih tema nuansa tanaman & rumah kaca hidroponik (
+                {BOTANICAL_THEMES.filter((t) => !t.isDark).length} tema terang &{' '}
+                {BOTANICAL_THEMES.filter((t) => t.isDark).length} tema gelap):
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {BOTANICAL_THEMES.map((theme) => {
@@ -234,7 +236,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           {theme.swatches.map((hex, i) => (
                             <span
                               key={i}
-                              className="h-4 w-4 rounded-full border border-black/15"
+                              className="h-4 w-4 rounded-full border border-black/15 dark:border-white/25"
                               style={{ backgroundColor: hex }}
                             />
                           ))}
@@ -253,7 +255,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {section === 'font' && (
             <div className="space-y-3">
               <div className="text-xs font-medium" style={{ color: 'var(--app-text-muted)' }}>
-                Tersedia 6 pilihan jenis huruf untuk keterbacaan angka dan laporan kebun:
+                Tersedia {FONT_OPTIONS.length} pilihan jenis huruf untuk keterbacaan angka dan laporan kebun:
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {FONT_OPTIONS.map((font) => {

@@ -437,7 +437,7 @@ export default function App() {
               updatedAt: meta.updatedAt,
               notes: meta.notes,
               activeGhId: meta.activeGhId,
-              greenhouses: prev.documents[0]?.greenhouses || docStoreRef.current.documents[0].greenhouses,
+              greenhouses: prev.documents[0]?.greenhouses || docStoreRef.current.documents[0]?.greenhouses || [],
             };
           });
           // Preserve locally created offline documents not yet uploaded
