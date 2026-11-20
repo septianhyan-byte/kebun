@@ -38,6 +38,7 @@ import {
   SelfSaleReceipt,
 } from '../types';
 import { formatDateShortId, toLocalDateInputValue } from '../utils/dateUtils';
+import { BuyerField } from './BuyerField';
 import { SelfSaleReceiptModal } from './SelfSaleReceiptModal';
 
 interface DashboardAccountingProps {
@@ -1716,7 +1717,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
               })}
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div>
                 <label className="block text-[11px] font-medium mb-1">Tanggal Jual</label>
                 <input
@@ -1804,23 +1805,18 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="block text-[11px] font-medium mb-1">Pembeli / Pasar</label>
-                <input
-                  type="text"
+              <div className="sm:col-span-2 lg:col-span-2">
+                <BuyerField
+                  id="sale-buyer-input"
+                  label="Pembeli / Pasar"
                   value={saleBuyer}
-                  onChange={(e) => setSaleBuyer(e.target.value)}
-                  placeholder="Supermarket / Eceran..."
-                  className="h-9 w-full rounded-lg border px-2.5 text-xs focus:outline-none"
-                  style={{
-                    borderColor: 'var(--app-border)',
-                    backgroundColor: 'var(--app-surface)',
-                    color: 'var(--app-text)',
-                  }}
+                  onChange={setSaleBuyer}
+                  placeholder="Ketik manual (Supermarket / Eceran)..."
+                  maxLength={160}
                 />
               </div>
 
-              <div>
+              <div className="sm:col-span-2 lg:col-span-2">
                 <label className="block text-[11px] font-medium mb-1">Catatan</label>
                 <input
                   type="text"

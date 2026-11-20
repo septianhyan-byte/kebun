@@ -64,6 +64,10 @@ export function formatEscPosReport(
   let sampledCount = 0;
   let totalSampleKg = 0;
   let totalFruits = 0;
+  let goodPlants = 0;
+  let badPlants = 0;
+  let goodFruits = 0;
+  let badFruits = 0;
   for (const p of gh.plants) {
     if (p.status === 'kosong') continue;
     if (p.estWeightKg > 0) {
@@ -72,7 +76,15 @@ export function formatEscPosReport(
     }
     const isFruit = p.fruitingStatus ? p.fruitingStatus === 'berbuah' : p.fruitCount > 0;
     if (isFruit) {
-      totalFruits += Math.max(1, p.fruitCount || 0);
+      const qty = Math.max(1, p.fruitCount || 0);
+      totalFruits += qty;
+      if (p.fruitQuality === 'jelek') {
+        badPlants += 1;
+        badFruits += qty;
+      } else {
+        goodPlants += 1;
+        goodFruits += qty;
+      }
     }
   }
   const sampleAvgKg = sampledCount > 0 ? totalSampleKg / sampledCount : 0;
@@ -83,6 +95,8 @@ export function formatEscPosReport(
       ? Number(sampleAvgKg.toFixed(2))
       : 1.5;
   const estTotalWeightKg = totalFruits * effAvgKg;
+  const goodEstWeightKg = goodFruits * effAvgKg;
+  const badEstWeightKg = badFruits * effAvgKg;
 
   const latestLog = gh.waterLogs[0];
   const pendingTreatments = gh.treatments.filter((t) => t.status === 'terjadwal');
@@ -135,6 +149,8 @@ export function formatEscPosReport(
       `Sakit       : ${sick}`,
       `Panen       : ${harvest}`,
       `Berbuah     : ${fruiting}`,
+      `Buah Bagus  : ${goodPlants} phn (${goodEstWeightKg.toFixed(1)} kg)`,
+      `Buah Jelek  : ${badPlants} phn (${badEstWeightKg.toFixed(1)} kg)`,
       `Tdk Berbuah : ${notFruiting}`,
       `Rata2 Berat : ${effAvgKg.toFixed(2)} kg/buah`,
       `Est. Panen  : ${estTotalWeightKg.toFixed(1)} kg (${totalFruits} buah)`

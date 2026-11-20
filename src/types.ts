@@ -25,6 +25,7 @@ export type TreatmentStatus = 'terjadwal' | 'selesai';
 
 export type PlantHealthStatus = 'sehat' | 'perhatian' | 'sakit' | 'panen' | 'kosong';
 export type FruitingStatus = 'berbuah' | 'tidak_berbuah';
+export type FruitQuality = 'bagus' | 'jelek';
 
 export type ExpenseCategory =
   | 'pupuk'
@@ -183,6 +184,7 @@ export interface PlantCondition {
   id: number;
   status: PlantHealthStatus;
   fruitingStatus?: FruitingStatus;
+  fruitQuality?: FruitQuality;
   symptom: string;
   heightCm: number;
   fruitCount: number;

@@ -92,6 +92,8 @@ export function generatePlants(
       id: i,
       status,
       fruitingStatus: fruitCount > 0 ? 'berbuah' : 'tidak_berbuah',
+      fruitQuality:
+        !freshBlank && fruitCount > 0 && status === 'sakit' ? 'jelek' : 'bagus',
       symptom,
       heightCm,
       fruitCount,
@@ -635,6 +637,45 @@ export function saveOperatorNames(names: string[]): string[] {
     localStorage.setItem(OPERATOR_NAMES_KEY, JSON.stringify(unique));
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('melonflow:operators-updated', { detail: unique }));
+    }
+  } catch {
+    // ignore storage quota errors
+  }
+  return unique;
+}
+
+const BUYER_NAMES_KEY = 'melonflow_buyer_names_v1';
+
+export function loadBuyerNames(): string[] {
+  try {
+    const raw = localStorage.getItem(BUYER_NAMES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      .map((x) => x.trim().slice(0, 120));
+  } catch {
+    return [];
+  }
+}
+
+export function saveBuyerNames(names: string[]): string[] {
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of names) {
+    const clean = raw.trim().slice(0, 120);
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(clean);
+    }
+  }
+  try {
+    localStorage.setItem(BUYER_NAMES_KEY, JSON.stringify(unique));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('melonflow:buyers-updated', { detail: unique }));
     }
   } catch {
     // ignore storage quota errors

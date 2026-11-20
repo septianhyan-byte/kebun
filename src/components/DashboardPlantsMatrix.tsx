@@ -13,11 +13,18 @@ import {
   Scale,
   Search,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   XCircle,
 } from 'lucide-react';
-import { FRUITING_STATUS_META, PLANT_STATUS_META } from '../constants/themes';
 import {
+  FRUIT_QUALITY_META,
+  FRUITING_STATUS_META,
+  PLANT_STATUS_META,
+} from '../constants/themes';
+import {
+  FruitQuality,
   FruitingStatus,
   GreenhouseData,
   PlantCondition,
@@ -40,16 +47,21 @@ function getFruiting(p: PlantCondition): FruitingStatus {
   return p.fruitCount > 0 ? 'berbuah' : 'tidak_berbuah';
 }
 
+function getFruitQuality(p: PlantCondition): FruitQuality {
+  return p.fruitQuality === 'jelek' ? 'jelek' : 'bagus';
+}
+
 export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
   gh,
   onUpdateGh,
 }) => {
   const inspectorRef = useRef<HTMLElement | null>(null);
   const [viewMode, setViewMode] = useState<'block' | 'all'>('block');
-  const [colorMode, setColorMode] = useState<'health' | 'fruiting'>('health');
+  const [colorMode, setColorMode] = useState<'health' | 'fruiting' | 'quality'>('health');
   const [activeBlock, setActiveBlock] = useState(0); // 0 = 1-100, 1 = 101-200...
   const [statusFilter, setStatusFilter] = useState<'all' | PlantHealthStatus>('all');
   const [fruitingFilter, setFruitingFilter] = useState<'all' | FruitingStatus>('all');
+  const [qualityFilter, setQualityFilter] = useState<'all' | FruitQuality>('all');
   const [dateFilter, setDateFilter] = useState<string>('');
   const [jumpNumber, setJumpNumber] = useState('');
   const [selectedId, setSelectedId] = useState<number>(1);
@@ -66,6 +78,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
   const [rangeEnd, setRangeEnd] = useState(String(gh.plants.length));
   const [batchStatus, setBatchStatus] = useState<'keep' | PlantHealthStatus>('keep');
   const [batchFruiting, setBatchFruiting] = useState<'keep' | FruitingStatus>('keep');
+  const [batchFruitQuality, setBatchFruitQuality] = useState<'keep' | FruitQuality>('keep');
   const [batchFruitCount, setBatchFruitCount] = useState('');
   const [batchHeightCm, setBatchHeightCm] = useState('');
   const [batchEstWeightKg, setBatchEstWeightKg] = useState('');
@@ -122,10 +135,16 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       kosong: 0,
       berbuah: 0,
       tidak_berbuah: 0,
+      bagus: 0,
+      jelek: 0,
     };
     for (const p of gh.plants) {
       res[p.status] += 1;
-      res[getFruiting(p)] += 1;
+      const fruiting = getFruiting(p);
+      res[fruiting] += 1;
+      if (p.status !== 'kosong' && fruiting === 'berbuah') {
+        res[getFruitQuality(p)] += 1;
+      }
     }
     return res;
   }, [gh.plants]);
@@ -135,6 +154,14 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     let totalSampleWeightKg = 0;
     let fruitingActiveCount = 0;
     let totalFruits = 0;
+    let goodPlantCount = 0;
+    let badPlantCount = 0;
+    let goodFruits = 0;
+    let badFruits = 0;
+    let goodSampledCount = 0;
+    let badSampledCount = 0;
+    let goodSampleWeightKg = 0;
+    let badSampleWeightKg = 0;
 
     for (const p of gh.plants) {
       if (p.status === 'kosong') continue;
@@ -144,7 +171,23 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       }
       if (getFruiting(p) === 'berbuah') {
         fruitingActiveCount += 1;
-        totalFruits += Math.max(1, p.fruitCount || 0);
+        const fruitQty = Math.max(1, p.fruitCount || 0);
+        totalFruits += fruitQty;
+        if (getFruitQuality(p) === 'jelek') {
+          badPlantCount += 1;
+          badFruits += fruitQty;
+          if (p.estWeightKg > 0) {
+            badSampledCount += 1;
+            badSampleWeightKg += p.estWeightKg;
+          }
+        } else {
+          goodPlantCount += 1;
+          goodFruits += fruitQty;
+          if (p.estWeightKg > 0) {
+            goodSampledCount += 1;
+            goodSampleWeightKg += p.estWeightKg;
+          }
+        }
       }
     }
 
@@ -157,6 +200,8 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
         : 1.5;
 
     const estimatedTotalKg = totalFruits * effectiveAvgKg;
+    const goodEstimatedKg = goodFruits * effectiveAvgKg;
+    const badEstimatedKg = badFruits * effectiveAvgKg;
     return {
       sampledCount,
       totalSampleWeightKg,
@@ -165,6 +210,16 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       totalFruits,
       effectiveAvgKg,
       estimatedTotalKg,
+      goodPlantCount,
+      badPlantCount,
+      goodFruits,
+      badFruits,
+      goodSampledCount,
+      badSampledCount,
+      goodSampleWeightKg,
+      badSampleWeightKg,
+      goodEstimatedKg,
+      badEstimatedKg,
     };
   }, [gh.plants, gh.avgMelonWeightKg]);
 
@@ -199,10 +254,18 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     return base.filter((p) => {
       if (statusFilter !== 'all' && p.status !== statusFilter) return false;
       if (fruitingFilter !== 'all' && getFruiting(p) !== fruitingFilter) return false;
+      if (
+        qualityFilter !== 'all' &&
+        (p.status === 'kosong' ||
+          getFruiting(p) !== 'berbuah' ||
+          getFruitQuality(p) !== qualityFilter)
+      ) {
+        return false;
+      }
       if (dateFilter && !matchesLocalDate(p.inspectionDate || p.updatedAt, dateFilter)) return false;
       return true;
     });
-  }, [gh.plants, viewMode, activeBlock, statusFilter, fruitingFilter, dateFilter]);
+  }, [gh.plants, viewMode, activeBlock, statusFilter, fruitingFilter, qualityFilter, dateFilter]);
 
   const selectedPlant = useMemo(() => {
     return gh.plants[selectedId - 1] || gh.plants[0];
@@ -262,6 +325,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     if (!Number.isNaN(num) && num >= 1 && num <= gh.plants.length) {
       setStatusFilter('all');
       setFruitingFilter('all');
+      setQualityFilter('all');
       setDateFilter('');
       handleSelectPlant(num);
     }
@@ -405,6 +469,8 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
         const nextStatus = batchStatus === 'keep' ? p.status : batchStatus;
         let nextFruiting = batchFruiting === 'keep' ? getFruiting(p) : batchFruiting;
         let nextFruitCount = parsedFruitCount !== null ? parsedFruitCount : p.fruitCount;
+        const nextQuality =
+          batchFruitQuality === 'keep' ? getFruitQuality(p) : batchFruitQuality;
 
         if (parsedFruitCount !== null && batchFruiting === 'keep') {
           nextFruiting = parsedFruitCount > 0 ? 'berbuah' : 'tidak_berbuah';
@@ -412,12 +478,20 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
           nextFruitCount = Math.max(1, p.fruitCount);
         } else if (batchFruiting === 'tidak_berbuah' && parsedFruitCount === null) {
           nextFruitCount = 0;
+        } else if (
+          batchFruitQuality !== 'keep' &&
+          batchFruiting === 'keep' &&
+          parsedFruitCount === null
+        ) {
+          nextFruiting = 'berbuah';
+          nextFruitCount = Math.max(1, p.fruitCount);
         }
 
         return {
           ...p,
           status: nextStatus,
           fruitingStatus: nextFruiting,
+          fruitQuality: nextQuality,
           fruitCount: nextFruitCount,
           heightCm: parsedHeight !== null ? parsedHeight : p.heightCm,
           estWeightKg: parsedWeight !== null ? parsedWeight : p.estWeightKg,
@@ -439,6 +513,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     ...p,
     status: 'kosong',
     fruitingStatus: 'tidak_berbuah',
+    fruitQuality: 'bagus',
     symptom: 'Data dihapus / slot kosong',
     heightCm: 0,
     fruitCount: 0,
@@ -490,6 +565,13 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     if (colorMode === 'fruiting') {
       return FRUITING_STATUS_META[getFruiting(plant)].cellBg;
     }
+    if (colorMode === 'quality') {
+      if (plant.status === 'kosong') return PLANT_STATUS_META.kosong.cellBg;
+      if (getFruiting(plant) === 'tidak_berbuah') {
+        return FRUITING_STATUS_META.tidak_berbuah.cellBg;
+      }
+      return FRUIT_QUALITY_META[getFruitQuality(plant)].cellBg;
+    }
     return PLANT_STATUS_META[plant.status].cellBg;
   };
 
@@ -503,15 +585,16 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
             onClick={() => {
               setStatusFilter('all');
               setFruitingFilter('all');
+              setQualityFilter('all');
             }}
             className="rounded-xl border p-3.5 text-left transition-colors cursor-pointer"
             style={{
               backgroundColor:
-                statusFilter === 'all' && fruitingFilter === 'all'
+                statusFilter === 'all' && fruitingFilter === 'all' && qualityFilter === 'all'
                   ? 'var(--app-accent-soft)'
                   : 'var(--app-surface)',
               borderColor:
-                statusFilter === 'all' && fruitingFilter === 'all'
+                statusFilter === 'all' && fruitingFilter === 'all' && qualityFilter === 'all'
                   ? 'var(--app-accent)'
                   : 'var(--app-border)',
             }}
@@ -568,8 +651,8 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
           })}
         </div>
 
-        {/* Berbuah & Tidak Berbuah Summary Bar */}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {/* Berbuah & Tidak Berbuah + Kondisi Buah (Bagus / Jelek) Summary Bar */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {(['berbuah', 'tidak_berbuah'] as FruitingStatus[]).map((fKey) => {
             const meta = FRUITING_STATUS_META[fKey];
             const active = fruitingFilter === fKey;
@@ -580,6 +663,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                 type="button"
                 onClick={() => {
                   setColorMode('fruiting');
+                  setQualityFilter('all');
                   setFruitingFilter(active ? 'all' : fKey);
                 }}
                 className="flex items-center justify-between rounded-xl border px-4 py-3 text-left transition-colors cursor-pointer"
@@ -597,10 +681,10 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                   </span>
                   <div>
                     <div className={`text-xs font-semibold ${meta.colorClass}`}>
-                      Kondisi: {meta.label}
+                      {meta.label}
                     </div>
                     <div className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
-                      {active ? 'Filter aktif — klik lagi untuk tampilkan semua' : 'Klik untuk memfilter & mewarnai peta'}
+                      {active ? 'Filter aktif — klik lagi' : 'Klik untuk filter peta'}
                     </div>
                   </div>
                 </div>
@@ -608,6 +692,64 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                   <div className="text-xl font-bold">{counts[fKey].toLocaleString('id-ID')}</div>
                   <div className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
                     {pct}%
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+
+          {(['bagus', 'jelek'] as FruitQuality[]).map((qKey) => {
+            const meta = FRUIT_QUALITY_META[qKey];
+            const active = qualityFilter === qKey;
+            const estKg =
+              qKey === 'bagus' ? weightMetrics.goodEstimatedKg : weightMetrics.badEstimatedKg;
+            const fruitQty =
+              qKey === 'bagus' ? weightMetrics.goodFruits : weightMetrics.badFruits;
+            const pctFruiting =
+              weightMetrics.fruitingActiveCount > 0
+                ? ((counts[qKey] / weightMetrics.fruitingActiveCount) * 100).toFixed(1)
+                : '0.0';
+            return (
+              <button
+                key={qKey}
+                type="button"
+                onClick={() => {
+                  setColorMode('quality');
+                  setFruitingFilter('all');
+                  setQualityFilter(active ? 'all' : qKey);
+                }}
+                className="flex items-center justify-between rounded-xl border px-4 py-3 text-left transition-colors cursor-pointer"
+                style={{
+                  backgroundColor: active ? 'var(--app-surface-muted)' : 'var(--app-surface)',
+                  borderColor: active ? meta.cellBg : 'var(--app-border)',
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <span
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-white shrink-0"
+                    style={{ backgroundColor: meta.cellBg }}
+                  >
+                    {qKey === 'bagus' ? (
+                      <ThumbsUp className="h-4 w-4" />
+                    ) : (
+                      <ThumbsDown className="h-4 w-4" />
+                    )}
+                  </span>
+                  <div>
+                    <div className={`text-xs font-semibold ${meta.colorClass}`}>
+                      Kondisi: {meta.label}
+                    </div>
+                    <div className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                      {counts[qKey].toLocaleString('id-ID')} phn ({pctFruiting}%) · {fruitQty.toLocaleString('id-ID')} buah
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right font-mono-tabular">
+                  <div className={`text-lg font-bold ${meta.colorClass}`}>
+                    {estKg.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg
+                  </div>
+                  <div className="text-[10px]" style={{ color: 'var(--app-text-muted)' }}>
+                    {active ? 'Filter aktif' : 'Klik filter'}
                   </div>
                 </div>
               </button>
@@ -783,6 +925,100 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Rincian Berat Buah Bagus vs Jelek */}
+          <div
+            className="mt-3 grid grid-cols-1 gap-2.5 border-t pt-3 sm:grid-cols-2"
+            style={{ borderColor: 'var(--app-border)' }}
+          >
+            <div
+              className="flex items-center justify-between rounded-lg border px-3.5 py-2.5"
+              style={{
+                borderColor: FRUIT_QUALITY_META.bagus.cellBg,
+                backgroundColor: 'var(--app-canvas)',
+              }}
+            >
+              <div className="flex items-center gap-2.5">
+                <span
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-white shrink-0"
+                  style={{ backgroundColor: FRUIT_QUALITY_META.bagus.cellBg }}
+                >
+                  <ThumbsUp className="h-3.5 w-3.5" />
+                </span>
+                <div>
+                  <div className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                    Total Buah Bagus
+                  </div>
+                  <div className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                    {weightMetrics.goodPlantCount.toLocaleString('id-ID')} pohon ·{' '}
+                    {weightMetrics.goodFruits.toLocaleString('id-ID')} buah
+                    {weightMetrics.goodSampleWeightKg > 0
+                      ? ` · input bobot ${weightMetrics.goodSampleWeightKg.toLocaleString('id-ID', {
+                          maximumFractionDigits: 1,
+                        })} kg`
+                      : ''}
+                  </div>
+                </div>
+              </div>
+              <div className="text-right font-mono-tabular">
+                <div className="text-base font-bold text-emerald-700 dark:text-emerald-400">
+                  {weightMetrics.goodEstimatedKg.toLocaleString('id-ID', {
+                    maximumFractionDigits: 1,
+                  })}{' '}
+                  kg
+                </div>
+                <div className="text-[10px]" style={{ color: 'var(--app-text-muted)' }}>
+                  {weightMetrics.estimatedTotalKg > 0
+                    ? `${((weightMetrics.goodEstimatedKg / weightMetrics.estimatedTotalKg) * 100).toFixed(1)}% dari total`
+                    : '0%'}
+                </div>
+              </div>
+            </div>
+
+            <div
+              className="flex items-center justify-between rounded-lg border px-3.5 py-2.5"
+              style={{
+                borderColor: FRUIT_QUALITY_META.jelek.cellBg,
+                backgroundColor: 'var(--app-canvas)',
+              }}
+            >
+              <div className="flex items-center gap-2.5">
+                <span
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-white shrink-0"
+                  style={{ backgroundColor: FRUIT_QUALITY_META.jelek.cellBg }}
+                >
+                  <ThumbsDown className="h-3.5 w-3.5" />
+                </span>
+                <div>
+                  <div className="text-xs font-semibold text-rose-700 dark:text-rose-400">
+                    Total Buah Jelek
+                  </div>
+                  <div className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                    {weightMetrics.badPlantCount.toLocaleString('id-ID')} pohon ·{' '}
+                    {weightMetrics.badFruits.toLocaleString('id-ID')} buah
+                    {weightMetrics.badSampleWeightKg > 0
+                      ? ` · input bobot ${weightMetrics.badSampleWeightKg.toLocaleString('id-ID', {
+                          maximumFractionDigits: 1,
+                        })} kg`
+                      : ''}
+                  </div>
+                </div>
+              </div>
+              <div className="text-right font-mono-tabular">
+                <div className="text-base font-bold text-rose-700 dark:text-rose-400">
+                  {weightMetrics.badEstimatedKg.toLocaleString('id-ID', {
+                    maximumFractionDigits: 1,
+                  })}{' '}
+                  kg
+                </div>
+                <div className="text-[10px]" style={{ color: 'var(--app-text-muted)' }}>
+                  {weightMetrics.estimatedTotalKg > 0
+                    ? `${((weightMetrics.badEstimatedKg / weightMetrics.estimatedTotalKg) * 100).toFixed(1)}% dari total`
+                    : '0%'}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -829,9 +1065,9 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                 </button>
               </div>
 
-              {/* Map Color Mode Toggle: Kesehatan vs Berbuah */}
+              {/* Map Color Mode Toggle: Kesehatan vs Berbuah vs Kondisi Buah */}
               <div
-                className="flex items-center gap-1 rounded-lg p-1"
+                className="flex flex-wrap items-center gap-1 rounded-lg p-1"
                 style={{ backgroundColor: 'var(--app-surface-muted)' }}
               >
                 <button
@@ -855,6 +1091,17 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                   }}
                 >
                   Warna: Berbuah
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setColorMode('quality')}
+                  className="rounded-md px-2.5 py-1.5 text-xs font-medium cursor-pointer whitespace-nowrap"
+                  style={{
+                    backgroundColor: colorMode === 'quality' ? 'var(--app-surface)' : 'transparent',
+                    color: colorMode === 'quality' ? 'var(--app-accent)' : 'var(--app-text-muted)',
+                  }}
+                >
+                  Warna: Kondisi Buah
                 </button>
               </div>
 
@@ -1224,6 +1471,44 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                 type="button"
                 disabled={quickTargetCount === 0}
                 onClick={() =>
+                  applyQuickBulkUpdate('Buah Bagus', (p) => ({
+                    fruitingStatus: 'berbuah',
+                    fruitCount: Math.max(1, p.fruitCount),
+                    fruitQuality: 'bagus',
+                  }))
+                }
+                className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold text-white cursor-pointer disabled:opacity-40"
+                style={{ backgroundColor: FRUIT_QUALITY_META.bagus.cellBg }}
+              >
+                <ThumbsUp className="h-3.5 w-3.5" />
+                {quickTargetCount === gh.plants.length
+                  ? 'Semua Buah Bagus'
+                  : `Buah Bagus (${quickTargetCount})`}
+              </button>
+
+              <button
+                type="button"
+                disabled={quickTargetCount === 0}
+                onClick={() =>
+                  applyQuickBulkUpdate('Buah Jelek', (p) => ({
+                    fruitingStatus: 'berbuah',
+                    fruitCount: Math.max(1, p.fruitCount),
+                    fruitQuality: 'jelek',
+                  }))
+                }
+                className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold text-white cursor-pointer disabled:opacity-40"
+                style={{ backgroundColor: FRUIT_QUALITY_META.jelek.cellBg }}
+              >
+                <ThumbsDown className="h-3.5 w-3.5" />
+                {quickTargetCount === gh.plants.length
+                  ? 'Semua Buah Jelek'
+                  : `Buah Jelek (${quickTargetCount})`}
+              </button>
+
+              <button
+                type="button"
+                disabled={quickTargetCount === 0}
+                onClick={() =>
                   applyQuickBulkUpdate('Semua Sehat', () => ({
                     status: 'sehat',
                     symptom: 'Pertumbuhan normal',
@@ -1430,6 +1715,23 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                   </select>
                 </div>
                 <div>
+                  <label className="block text-[11px] font-medium mb-1">Kondisi Buah</label>
+                  <select
+                    value={batchFruitQuality}
+                    onChange={(e) => setBatchFruitQuality(e.target.value as 'keep' | FruitQuality)}
+                    className="w-full rounded-md border px-2 py-1.5 text-xs"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-surface)',
+                      color: 'var(--app-text)',
+                    }}
+                  >
+                    <option value="keep">Tidak diubah</option>
+                    <option value="bagus">Bagus</option>
+                    <option value="jelek">Jelek</option>
+                  </select>
+                </div>
+                <div>
                   <label className="block text-[11px] font-medium mb-1">Jumlah Buah</label>
                   <input
                     type="number"
@@ -1617,32 +1919,62 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
           {/* Hover info bar + Legend */}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
             <div className="flex flex-wrap items-center gap-3" style={{ color: 'var(--app-text-muted)' }}>
-              {colorMode === 'health'
-                ? (Object.keys(PLANT_STATUS_META) as PlantHealthStatus[]).map((k) => (
+              {colorMode === 'health' ? (
+                (Object.keys(PLANT_STATUS_META) as PlantHealthStatus[]).map((k) => (
+                  <span key={k} className="inline-flex items-center gap-1.5">
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-sm"
+                      style={{ backgroundColor: PLANT_STATUS_META[k].cellBg }}
+                    />
+                    <span>{PLANT_STATUS_META[k].short}</span>
+                  </span>
+                ))
+              ) : colorMode === 'fruiting' ? (
+                (['berbuah', 'tidak_berbuah'] as FruitingStatus[]).map((k) => (
+                  <span key={k} className="inline-flex items-center gap-1.5">
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-sm"
+                      style={{ backgroundColor: FRUITING_STATUS_META[k].cellBg }}
+                    />
+                    <span>{FRUITING_STATUS_META[k].short}</span>
+                  </span>
+                ))
+              ) : (
+                <>
+                  {(['bagus', 'jelek'] as FruitQuality[]).map((k) => (
                     <span key={k} className="inline-flex items-center gap-1.5">
                       <span
                         className="inline-block h-2.5 w-2.5 rounded-sm"
-                        style={{ backgroundColor: PLANT_STATUS_META[k].cellBg }}
+                        style={{ backgroundColor: FRUIT_QUALITY_META[k].cellBg }}
                       />
-                      <span>{PLANT_STATUS_META[k].short}</span>
-                    </span>
-                  ))
-                : (['berbuah', 'tidak_berbuah'] as FruitingStatus[]).map((k) => (
-                    <span key={k} className="inline-flex items-center gap-1.5">
-                      <span
-                        className="inline-block h-2.5 w-2.5 rounded-sm"
-                        style={{ backgroundColor: FRUITING_STATUS_META[k].cellBg }}
-                      />
-                      <span>{FRUITING_STATUS_META[k].short}</span>
+                      <span>{FRUIT_QUALITY_META[k].label}</span>
                     </span>
                   ))}
+                  <span className="inline-flex items-center gap-1.5">
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-sm"
+                      style={{ backgroundColor: FRUITING_STATUS_META.tidak_berbuah.cellBg }}
+                    />
+                    <span>Tidak Berbuah</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-sm"
+                      style={{ backgroundColor: PLANT_STATUS_META.kosong.cellBg }}
+                    />
+                    <span>Kosong</span>
+                  </span>
+                </>
+              )}
             </div>
             <div className="font-mono-tabular text-xs min-h-[18px]">
               {hoveredPlant ? (
                 <span>
                   <strong>#{hoveredPlant.id}</strong> · {PLANT_STATUS_META[hoveredPlant.status].short} ·{' '}
-                  {FRUITING_STATUS_META[getFruiting(hoveredPlant)].short} ·{' '}
-                  {formatDateShortId(hoveredPlant.inspectionDate || hoveredPlant.updatedAt)} ·{' '}
+                  {getFruiting(hoveredPlant) === 'berbuah'
+                    ? `Berbuah (${FRUIT_QUALITY_META[getFruitQuality(hoveredPlant)].short})`
+                    : FRUITING_STATUS_META.tidak_berbuah.short}{' '}
+                  · {formatDateShortId(hoveredPlant.inspectionDate || hoveredPlant.updatedAt)} ·{' '}
                   {hoveredPlant.symptom}
                 </span>
               ) : (
@@ -1765,7 +2097,9 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
             >
               <span className="font-mono-tabular font-semibold truncate">
                 Dipilih: #{selectedPlant.id} · {PLANT_STATUS_META[selectedPlant.status].short} ·{' '}
-                {FRUITING_STATUS_META[getFruiting(selectedPlant)].short}
+                {getFruiting(selectedPlant) === 'berbuah'
+                  ? `Berbuah (${FRUIT_QUALITY_META[getFruitQuality(selectedPlant)].short})`
+                  : FRUITING_STATUS_META.tidak_berbuah.short}
               </span>
               <button
                 type="button"
@@ -1941,40 +2275,90 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                 </div>
               </div>
 
-              {/* Kondisi Berbuah vs Tidak Berbuah */}
-              <div>
-                <label className="block text-xs font-medium mb-1.5">
-                  Status Pembuahan (Berbuah / Tidak Berbuah)
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(['berbuah', 'tidak_berbuah'] as FruitingStatus[]).map((fKey) => {
-                    const meta = FRUITING_STATUS_META[fKey];
-                    const active = getFruiting(selectedPlant) === fKey;
-                    return (
-                      <button
-                        key={fKey}
-                        type="button"
-                        onClick={() =>
-                          updateSinglePlant(selectedPlant.id, {
-                            fruitingStatus: fKey,
-                            fruitCount:
-                              fKey === 'berbuah'
-                                ? Math.max(1, selectedPlant.fruitCount)
-                                : 0,
-                          })
-                        }
-                        className="flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors cursor-pointer"
-                        style={{
-                          borderColor: active ? meta.cellBg : 'var(--app-border)',
-                          backgroundColor: active ? meta.cellBg : 'var(--app-canvas)',
-                          color: active ? '#FFFFFF' : 'var(--app-text)',
-                        }}
-                      >
-                        <Apple className="h-3.5 w-3.5" />
-                        <span>{meta.short}</span>
-                      </button>
-                    );
-                  })}
+              {/* Kondisi Berbuah vs Tidak Berbuah & Kondisi Buah Bagus vs Jelek */}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium mb-1.5">
+                    Status Pembuahan (Berbuah / Tidak Berbuah)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['berbuah', 'tidak_berbuah'] as FruitingStatus[]).map((fKey) => {
+                      const meta = FRUITING_STATUS_META[fKey];
+                      const active = getFruiting(selectedPlant) === fKey;
+                      return (
+                        <button
+                          key={fKey}
+                          type="button"
+                          onClick={() =>
+                            updateSinglePlant(selectedPlant.id, {
+                              fruitingStatus: fKey,
+                              fruitCount:
+                                fKey === 'berbuah'
+                                  ? Math.max(1, selectedPlant.fruitCount)
+                                  : 0,
+                              fruitQuality:
+                                fKey === 'berbuah' ? getFruitQuality(selectedPlant) : 'bagus',
+                            })
+                          }
+                          className="flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors cursor-pointer"
+                          style={{
+                            borderColor: active ? meta.cellBg : 'var(--app-border)',
+                            backgroundColor: active ? meta.cellBg : 'var(--app-canvas)',
+                            color: active ? '#FFFFFF' : 'var(--app-text)',
+                          }}
+                        >
+                          <Apple className="h-3.5 w-3.5" />
+                          <span>{meta.short}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <label className="block text-xs font-medium">
+                      Kondisi Buah (Bagus / Jelek)
+                    </label>
+                    {getFruiting(selectedPlant) === 'tidak_berbuah' && (
+                      <span className="text-[10px]" style={{ color: 'var(--app-text-muted)' }}>
+                        Pilih untuk tandai berbuah
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['bagus', 'jelek'] as FruitQuality[]).map((qKey) => {
+                      const qMeta = FRUIT_QUALITY_META[qKey];
+                      const isFruiting = getFruiting(selectedPlant) === 'berbuah';
+                      const active = isFruiting && getFruitQuality(selectedPlant) === qKey;
+                      return (
+                        <button
+                          key={qKey}
+                          type="button"
+                          onClick={() =>
+                            updateSinglePlant(selectedPlant.id, {
+                              fruitingStatus: 'berbuah',
+                              fruitCount: Math.max(1, selectedPlant.fruitCount),
+                              fruitQuality: qKey,
+                            })
+                          }
+                          className="flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors cursor-pointer"
+                          style={{
+                            borderColor: active ? qMeta.cellBg : 'var(--app-border)',
+                            backgroundColor: active ? qMeta.cellBg : 'var(--app-canvas)',
+                            color: active ? '#FFFFFF' : 'var(--app-text)',
+                          }}
+                        >
+                          {qKey === 'bagus' ? (
+                            <ThumbsUp className="h-3.5 w-3.5" />
+                          ) : (
+                            <ThumbsDown className="h-3.5 w-3.5" />
+                          )}
+                          <span>{qMeta.short}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 

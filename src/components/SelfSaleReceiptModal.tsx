@@ -30,6 +30,7 @@ import {
   printViaWebUsb,
 } from '../utils/printer';
 import { compressQrisImageFile } from '../utils/qrisImage';
+import { BuyerField } from './BuyerField';
 import { PrintableReceipt } from './PrintableReceipt';
 
 interface DraftReceiptItem {
@@ -523,25 +524,17 @@ export const SelfSaleReceiptModal: React.FC<SelfSaleReceiptModalProps> = ({
                       }}
                     />
                   </div>
-                  <div>
-                    <label className="block text-[11px] font-medium mb-1">
-                      Nama Pembeli
-                    </label>
-                    <input
-                      type="text"
-                      maxLength={120}
+                  <div className="sm:col-span-2">
+                    <BuyerField
+                      id="receipt-buyer-name-input"
+                      label="Nama Pembeli"
                       value={buyerName}
-                      onChange={(e) => setBuyerName(e.target.value)}
-                      placeholder="Nama pelanggan..."
-                      className="h-9 w-full rounded-lg border px-2.5 text-xs focus:outline-none"
-                      style={{
-                        borderColor: 'var(--app-border)',
-                        backgroundColor: 'var(--app-surface)',
-                        color: 'var(--app-text)',
-                      }}
+                      onChange={setBuyerName}
+                      placeholder="Ketik nama pelanggan manual..."
+                      maxLength={120}
                     />
                   </div>
-                  <div>
+                  <div className="sm:col-span-2">
                     <label className="block text-[11px] font-medium mb-1">
                       Metode Pembayaran
                     </label>

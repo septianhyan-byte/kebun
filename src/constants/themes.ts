@@ -2,6 +2,7 @@ import {
   BotanicalThemeId,
   ExpenseCategory,
   FontOptionId,
+  FruitQuality,
   FruitingStatus,
   GrowthPhase,
   PlantHealthStatus,
@@ -382,6 +383,24 @@ export const FRUITING_STATUS_META: Record<
     short: 'Tidak Berbuah',
     cellBg: '#D97706',
     colorClass: 'text-amber-700 dark:text-amber-400',
+  },
+};
+
+export const FRUIT_QUALITY_META: Record<
+  FruitQuality,
+  { label: string; short: string; cellBg: string; colorClass: string }
+> = {
+  bagus: {
+    label: 'Buah Bagus',
+    short: 'Bagus',
+    cellBg: '#16A34A',
+    colorClass: 'text-emerald-700 dark:text-emerald-400',
+  },
+  jelek: {
+    label: 'Buah Jelek',
+    short: 'Jelek',
+    cellBg: '#E11D48',
+    colorClass: 'text-rose-700 dark:text-rose-400',
   },
 };
 

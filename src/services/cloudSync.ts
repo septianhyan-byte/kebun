@@ -212,6 +212,7 @@ function cleanPlantForCloud(p: PlantCondition): PlantCondition {
     id: Number(p.id),
     status: p.status,
     fruitingStatus: p.fruitingStatus || (p.fruitCount > 0 ? 'berbuah' : 'tidak_berbuah'),
+    fruitQuality: p.fruitQuality === 'jelek' ? 'jelek' : 'bagus',
     symptom: String(p.symptom || '').slice(0, 160),
     heightCm: Number(p.heightCm) || 0,
     fruitCount: Number(p.fruitCount) || 0,

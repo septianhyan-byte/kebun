@@ -70,6 +70,10 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
   let sampledCount = 0;
   let totalSampleKg = 0;
   let totalFruits = 0;
+  let goodPlants = 0;
+  let badPlants = 0;
+  let goodFruits = 0;
+  let badFruits = 0;
   for (const p of activeGh.plants) {
     if (p.status === 'kosong') continue;
     if (p.estWeightKg > 0) {
@@ -78,7 +82,15 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
     }
     const isFruit = p.fruitingStatus ? p.fruitingStatus === 'berbuah' : p.fruitCount > 0;
     if (isFruit) {
-      totalFruits += Math.max(1, p.fruitCount || 0);
+      const qty = Math.max(1, p.fruitCount || 0);
+      totalFruits += qty;
+      if (p.fruitQuality === 'jelek') {
+        badPlants += 1;
+        badFruits += qty;
+      } else {
+        goodPlants += 1;
+        goodFruits += qty;
+      }
     }
   }
   const sampleAvgKg = sampledCount > 0 ? totalSampleKg / sampledCount : 0;
@@ -89,6 +101,8 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
       ? Number(sampleAvgKg.toFixed(2))
       : 1.5;
   const estimatedTotalKg = totalFruits * effectiveAvgKg;
+  const goodEstimatedKg = goodFruits * effectiveAvgKg;
+  const badEstimatedKg = badFruits * effectiveAvgKg;
 
   // Accounting metrics
   const expenses = activeGh.expenses || [];
@@ -372,6 +386,10 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
                 {estimatedTotalKg.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg (
                 {(estimatedTotalKg / 100).toFixed(2)} kuintal)
               </div>
+              <div className="text-[10px] font-mono-tabular text-gray-600 mt-0.5">
+                Bagus: {goodEstimatedKg.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg ({goodPlants} phn) · Jelek:{' '}
+                {badEstimatedKg.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg ({badPlants} phn)
+              </div>
             </div>
           </div>
 
@@ -403,7 +421,7 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
                     <td className="border border-gray-300 px-2 py-1">
                       {PLANT_STATUS_META[p.status].short} (
                       {(p.fruitingStatus ? p.fruitingStatus === 'berbuah' : p.fruitCount > 0)
-                        ? 'Berbuah'
+                        ? `Berbuah - ${p.fruitQuality === 'jelek' ? 'Jelek' : 'Bagus'}`
                         : 'Tdk Berbuah'}
                       )
                     </td>
