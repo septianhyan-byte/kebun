@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Brush,
   Calendar,
@@ -6,10 +6,12 @@ import {
   Check,
   Copy,
   Droplet,
+  Pencil,
   Plus,
   Search,
   SprayCan,
   Trash2,
+  X,
 } from 'lucide-react';
 import {
   MEDICINE_SUGGESTIONS,
@@ -49,16 +51,38 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
 
-  useEffect(() => {
-    setSelectedIds([]);
-    setConfirmClearAll(false);
-    setDateFilter('');
-    setTargetPlants(`Semua Tanaman (1–${gh.capacity})`);
-  }, [gh.id, gh.capacity]);
+  interface MixItem {
+    category?: SprayCategory;
+    name: string;
+    active: string;
+    dosage: string;
+  }
+
+  const formRef = useRef<HTMLElement | null>(null);
+  const [editingTreatmentId, setEditingTreatmentId] = useState<string | null>(null);
 
   // Manual Treatment Form state
   const [formType, setFormType] = useState<TreatmentType>('penyemprotan');
   const [sprayCategory, setSprayCategory] = useState<SprayCategory>('pupuk');
+  const [sprayMixMode, setSprayMixMode] = useState<'single' | 'dual'>('single');
+  const [sprayDualSlot1, setSprayDualSlot1] = useState<MixItem>({
+    category: 'pupuk',
+    name: '',
+    active: '',
+    dosage: '',
+  });
+  const [sprayDualSlot2, setSprayDualSlot2] = useState<MixItem>({
+    category: 'fungisida',
+    name: '',
+    active: '',
+    dosage: '',
+  });
+  const [drenchMixMode, setDrenchMixMode] = useState<'single' | 'multi'>('single');
+  const [drenchSelectedItems, setDrenchSelectedItems] = useState<MixItem[]>([]);
+  const [customDrenchName, setCustomDrenchName] = useState('');
+  const [customDrenchActive, setCustomDrenchActive] = useState('');
+  const [customDrenchDosage, setCustomDrenchDosage] = useState('');
+
   const [medicineName, setMedicineName] = useState('');
   const [activeIngredient, setActiveIngredient] = useState('');
   const [dosage, setDosage] = useState('');
@@ -71,6 +95,32 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
   const [operator, setOperator] = useState('');
   const [notes, setNotes] = useState('');
   const [manualInputMode, setManualInputMode] = useState(false);
+
+  const resetMixStates = () => {
+    setSprayMixMode('single');
+    setSprayDualSlot1({ category: 'pupuk', name: '', active: '', dosage: '' });
+    setSprayDualSlot2({ category: 'fungisida', name: '', active: '', dosage: '' });
+    setDrenchMixMode('single');
+    setDrenchSelectedItems([]);
+    setCustomDrenchName('');
+    setCustomDrenchActive('');
+    setCustomDrenchDosage('');
+  };
+
+  useEffect(() => {
+    setSelectedIds([]);
+    setConfirmClearAll(false);
+    setDateFilter('');
+    setEditingTreatmentId(null);
+    setTargetPlants(`Semua Tanaman (1–${gh.capacity})`);
+    setMedicineName('');
+    setActiveIngredient('');
+    setDosage('');
+    setOperator('');
+    setNotes('');
+    setManualInputMode(false);
+    resetMixStates();
+  }, [gh.id, gh.capacity]);
 
   const summary = useMemo(() => {
     const byType = {
@@ -112,12 +162,70 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
         if (!matchSchedule && !matchComplete) return false;
       }
       if (q) {
-        const hay = `${t.medicineName} ${t.activeIngredient} ${t.sprayCategory || ''} ${t.targetPlants} ${t.operator} ${t.notes}`.toLowerCase();
+        const hay = `${t.medicineName || ''} ${t.activeIngredient || ''} ${t.sprayCategory || ''} ${t.targetPlants || ''} ${t.operator || ''} ${t.notes || ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
   }, [gh.treatments, typeFilter, sprayFilter, statusFilter, dateFilter, searchQuery]);
+
+  const syncMixItemsToForm = (items: MixItem[]) => {
+    const valid = items.filter((item) => item.name.trim() !== '');
+    setManualInputMode(false);
+    setMedicineName(valid.map((item) => item.name.trim()).join(' + '));
+    setActiveIngredient(
+      valid
+        .map((item) => item.active.trim())
+        .filter(Boolean)
+        .join(' + ')
+    );
+    setDosage(
+      valid
+        .map((item) => item.dosage.trim())
+        .filter(Boolean)
+        .join(' + ')
+    );
+  };
+
+  const updateDualSlot = (slotNumber: 1 | 2, nextSlot: MixItem) => {
+    if (slotNumber === 1) {
+      setSprayDualSlot1(nextSlot);
+      if (nextSlot.category) setSprayCategory(nextSlot.category);
+      syncMixItemsToForm([nextSlot, sprayDualSlot2]);
+    } else {
+      setSprayDualSlot2(nextSlot);
+      syncMixItemsToForm([sprayDualSlot1, nextSlot]);
+    }
+  };
+
+  const toggleDrenchMultiItem = (item: { name: string; active: string; dosage: string }) => {
+    setDrenchSelectedItems((prev) => {
+      const exists = prev.some((x) => x.name === item.name);
+      const next = exists
+        ? prev.filter((x) => x.name !== item.name)
+        : [...prev, { name: item.name, active: item.active, dosage: item.dosage }];
+      syncMixItemsToForm(next);
+      return next;
+    });
+  };
+
+  const addCustomDrenchItem = () => {
+    const name = customDrenchName.trim();
+    if (!name) return;
+    const newItem: MixItem = {
+      name,
+      active: customDrenchActive.trim() || 'Formula khusus kocor',
+      dosage: customDrenchDosage.trim() || 'Sesuai takaran',
+    };
+    setDrenchSelectedItems((prev) => {
+      const next = [...prev.filter((x) => x.name !== name), newItem];
+      syncMixItemsToForm(next);
+      return next;
+    });
+    setCustomDrenchName('');
+    setCustomDrenchActive('');
+    setCustomDrenchDosage('');
+  };
 
   const applySuggestion = (s: { name: string; active: string; dosage: string }) => {
     setManualInputMode(false);
@@ -133,7 +241,45 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
     setDosage('');
   };
 
-  const handleAddTreatment = (e: React.FormEvent) => {
+  const resetFormAfterSaveOrCancel = () => {
+    setEditingTreatmentId(null);
+    setMedicineName('');
+    setActiveIngredient('');
+    setDosage('');
+    setOperator('');
+    setNotes('');
+    setManualInputMode(false);
+    setFormStatus('terjadwal');
+    setScheduledAt(toLocalDateTimeInputValue(new Date(Date.now() + 3600 * 1000)));
+    setCompletedAtInput(toLocalDateTimeInputValue());
+    setTargetPlants(`Semua Tanaman (1–${gh.capacity})`);
+    resetMixStates();
+  };
+
+  const startEditingTreatment = (item: TreatmentRecord) => {
+    setEditingTreatmentId(item.id);
+    setFormType(item.type);
+    setSprayCategory(item.sprayCategory || 'pupuk');
+    resetMixStates();
+    setManualInputMode(true);
+    setMedicineName(item.medicineName);
+    setActiveIngredient(item.activeIngredient);
+    setDosage(item.dosage);
+    setTargetPlants(item.targetPlants);
+    const schedLocal = toLocalDateTimeInputValue(new Date(item.scheduledAt));
+    setScheduledAt(schedLocal);
+    setFormStatus(item.status);
+    setCompletedAtInput(
+      item.completedAt
+        ? toLocalDateTimeInputValue(new Date(item.completedAt))
+        : schedLocal
+    );
+    setOperator(item.operator);
+    setNotes(item.notes);
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const handleSaveTreatment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!medicineName.trim()) return;
 
@@ -143,7 +289,7 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
         ? localDateTimeInputToIso(completedAtInput || scheduledAt)
         : undefined;
     const record: TreatmentRecord = {
-      id: `tr-${Date.now()}`,
+      id: editingTreatmentId || `tr-${Date.now()}`,
       type: formType,
       sprayCategory: formType === 'penyemprotan' ? sprayCategory : undefined,
       medicineName: medicineName.trim(),
@@ -157,18 +303,23 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
       notes: notes.trim(),
     };
 
-    onUpdateGh((prev) => ({
-      ...prev,
-      treatments: [record, ...prev.treatments].sort((a, b) =>
-        String(b.scheduledAt).localeCompare(String(a.scheduledAt))
-      ),
-    }));
+    if (editingTreatmentId) {
+      onUpdateGh((prev) => ({
+        ...prev,
+        treatments: prev.treatments
+          .map((t) => (t.id === editingTreatmentId ? record : t))
+          .sort((a, b) => String(b.scheduledAt).localeCompare(String(a.scheduledAt))),
+      }));
+    } else {
+      onUpdateGh((prev) => ({
+        ...prev,
+        treatments: [record, ...prev.treatments].sort((a, b) =>
+          String(b.scheduledAt).localeCompare(String(a.scheduledAt))
+        ),
+      }));
+    }
 
-    setMedicineName('');
-    setActiveIngredient('');
-    setDosage('');
-    setOperator('');
-    setNotes('');
+    resetFormAfterSaveOrCancel();
   };
 
   const toggleStatus = (id: string) => {
@@ -203,6 +354,9 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
   };
 
   const deleteTreatment = (id: string) => {
+    if (editingTreatmentId === id) {
+      resetFormAfterSaveOrCancel();
+    }
     onUpdateGh((prev) => ({
       ...prev,
       treatments: prev.treatments.filter((t) => t.id !== id),
@@ -213,6 +367,9 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
   const deleteSelectedTreatments = () => {
     if (selectedIds.length === 0) return;
     const idSet = new Set(selectedIds);
+    if (editingTreatmentId && idSet.has(editingTreatmentId)) {
+      resetFormAfterSaveOrCancel();
+    }
     onUpdateGh((prev) => ({
       ...prev,
       treatments: prev.treatments.filter((t) => !idSet.has(t.id)),
@@ -221,6 +378,7 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
   };
 
   const deleteAllTreatments = () => {
+    resetFormAfterSaveOrCancel();
     onUpdateGh((prev) => ({
       ...prev,
       treatments: [],
@@ -327,18 +485,55 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
         {/* Left Form (5 cols) */}
         <section
+          ref={formRef}
           className="rounded-xl border p-5 xl:col-span-5 h-fit"
           style={{
             backgroundColor: 'var(--app-surface)',
-            borderColor: 'var(--app-border)',
+            borderColor: editingTreatmentId ? 'var(--app-accent)' : 'var(--app-border)',
           }}
         >
-          <h3 className="text-sm font-semibold">Input Perawatan Tanaman Manual</h3>
-          <p className="mt-0.5 text-xs" style={{ color: 'var(--app-text-muted)' }}>
-            Catat aplikasi penyemprotan (pupuk, insektisida, fungisida), pengolesan batang, atau pengocoran obat untuk {gh.name}.
-          </p>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold">
+                {editingTreatmentId ? 'Edit Catatan Perawatan Tanaman' : 'Input Perawatan Tanaman Manual'}
+              </h3>
+              <p className="mt-0.5 text-xs" style={{ color: 'var(--app-text-muted)' }}>
+                {editingTreatmentId
+                  ? `Ubah jenis obat, bahan aktif, dosis, jadwal, atau petugas untuk ${gh.name}.`
+                  : `Catat aplikasi penyemprotan (1 atau 2 barang bersama), pengolesan batang, atau pengocoran (tunggal / bersama) untuk ${gh.name}.`}
+              </p>
+            </div>
+            {editingTreatmentId && (
+              <button
+                type="button"
+                onClick={resetFormAfterSaveOrCancel}
+                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium cursor-pointer shrink-0"
+                style={{
+                  borderColor: 'var(--app-border)',
+                  backgroundColor: 'var(--app-surface-muted)',
+                  color: 'var(--app-text)',
+                }}
+              >
+                <X className="h-3.5 w-3.5" />
+                Batal
+              </button>
+            )}
+          </div>
 
-          <form onSubmit={handleAddTreatment} className="mt-4 space-y-3.5">
+          {editingTreatmentId && (
+            <div
+              className="mt-3 flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs font-medium"
+              style={{
+                borderColor: 'var(--app-accent)',
+                backgroundColor: 'var(--app-accent-soft)',
+                color: 'var(--app-accent)',
+              }}
+            >
+              <span>Sedang mengedit catatan perawatan — tekan Simpan Perubahan di bawah.</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSaveTreatment} className="mt-4 space-y-3.5">
             {/* Treatment Type Segmented Control */}
             <div>
               <label className="block text-xs font-medium mb-1.5">Metode Perawatan</label>
@@ -371,8 +566,218 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
               </p>
             </div>
 
-            {/* Sub-options when Penyemprotan: Pupuk, Insektisida, Fungisida */}
+            {/* Sub-options when Penyemprotan: Mode 1 Barang vs 2 Barang Bersama */}
             {formType === 'penyemprotan' && (
+              <div
+                className="rounded-lg border p-3 space-y-2.5"
+                style={{
+                  borderColor: 'var(--app-border)',
+                  backgroundColor: 'var(--app-canvas)',
+                }}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-xs font-semibold">
+                    Mode Penyemprotan
+                  </label>
+                  <div
+                    className="grid grid-cols-2 gap-1 rounded-lg p-1"
+                    style={{ backgroundColor: 'var(--app-surface-muted)' }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSprayMixMode('single')}
+                      className="rounded-md px-2.5 py-1 text-[11px] font-semibold cursor-pointer whitespace-nowrap"
+                      style={{
+                        backgroundColor: sprayMixMode === 'single' ? 'var(--app-surface)' : 'transparent',
+                        color: sprayMixMode === 'single' ? 'var(--app-accent)' : 'var(--app-text-muted)',
+                      }}
+                    >
+                      1 Jenis Barang
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSprayMixMode('dual');
+                        syncMixItemsToForm([sprayDualSlot1, sprayDualSlot2]);
+                      }}
+                      className="rounded-md px-2.5 py-1 text-[11px] font-semibold cursor-pointer whitespace-nowrap"
+                      style={{
+                        backgroundColor: sprayMixMode === 'dual' ? 'var(--app-accent)' : 'transparent',
+                        color: sprayMixMode === 'dual' ? 'var(--app-accent-fg)' : 'var(--app-text-muted)',
+                      }}
+                    >
+                      2 Barang (Semprot Bersama)
+                    </button>
+                  </div>
+                </div>
+
+                {sprayMixMode === 'single' ? (
+                  <>
+                    <div
+                      className="grid grid-cols-1 sm:grid-cols-3 gap-1 rounded-lg p-1"
+                      style={{ backgroundColor: 'var(--app-surface-muted)' }}
+                    >
+                      {(['pupuk', 'insektisida', 'fungisida'] as SprayCategory[]).map((cat) => {
+                        const active = sprayCategory === cat;
+                        return (
+                          <button
+                            key={cat}
+                            type="button"
+                            onClick={() => setSprayCategory(cat)}
+                            className="rounded-md py-1.5 px-2 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                            style={{
+                              backgroundColor: active ? 'var(--app-accent)' : 'transparent',
+                              color: active ? 'var(--app-accent-fg)' : 'var(--app-text-muted)',
+                            }}
+                          >
+                            {formatSprayLabel(cat)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                      {SPRAY_CATEGORY_LABELS[sprayCategory].desc}
+                    </p>
+                  </>
+                ) : (
+                  <div className="space-y-3 pt-1">
+                    <p className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                      Pilih 2 jenis barang yang dicampur dalam 1 tangki semprot (mis. Pupuk + Fungisida atau Insektisida + Fungisida). Hasil otomatis digabungkan di kolom bawah dan tetap bisa diedit.
+                    </p>
+                    {([1, 2] as const).map((slotNum) => {
+                      const slot = slotNum === 1 ? sprayDualSlot1 : sprayDualSlot2;
+                      const slotCat = slot.category || (slotNum === 1 ? 'pupuk' : 'fungisida');
+                      const slotSuggestions = SPRAY_SUGGESTIONS[slotCat];
+                      return (
+                        <div
+                          key={slotNum}
+                          className="rounded-lg border p-2.5 space-y-2"
+                          style={{
+                            borderColor: slot.name ? 'var(--app-accent)' : 'var(--app-border)',
+                            backgroundColor: 'var(--app-surface)',
+                          }}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-1.5">
+                            <span className="text-[11px] font-semibold" style={{ color: 'var(--app-accent)' }}>
+                              Barang {slotNum} {slot.name ? `· ${slot.name}` : '(Pilih / ketik)'}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {(['pupuk', 'insektisida', 'fungisida'] as SprayCategory[]).map((cat) => {
+                                const active = slotCat === cat;
+                                return (
+                                  <button
+                                    key={cat}
+                                    type="button"
+                                    onClick={() =>
+                                      updateDualSlot(slotNum, { ...slot, category: cat })
+                                    }
+                                    className="rounded px-2 py-0.5 text-[10px] font-semibold cursor-pointer"
+                                    style={{
+                                      backgroundColor: active ? 'var(--app-accent)' : 'var(--app-surface-muted)',
+                                      color: active ? 'var(--app-accent-fg)' : 'var(--app-text-muted)',
+                                    }}
+                                  >
+                                    {formatSprayLabel(cat)}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap gap-1">
+                            {slotSuggestions.map((s) => {
+                              const isPicked = slot.name === s.name;
+                              return (
+                                <button
+                                  key={s.name}
+                                  type="button"
+                                  onClick={() =>
+                                    updateDualSlot(slotNum, {
+                                      category: slotCat,
+                                      name: s.name,
+                                      active: s.active,
+                                      dosage: s.dosage,
+                                    })
+                                  }
+                                  className="rounded border px-2 py-0.5 text-[11px] font-medium cursor-pointer"
+                                  style={{
+                                    borderColor: isPicked ? 'var(--app-accent)' : 'var(--app-border)',
+                                    backgroundColor: isPicked ? 'var(--app-accent-soft)' : 'var(--app-surface-muted)',
+                                    color: isPicked ? 'var(--app-accent)' : 'var(--app-text)',
+                                  }}
+                                >
+                                  {s.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                            <input
+                              type="text"
+                              value={slot.name}
+                              onChange={(e) =>
+                                updateDualSlot(slotNum, {
+                                  ...slot,
+                                  category: slotCat,
+                                  name: e.target.value,
+                                })
+                              }
+                              placeholder={`Nama barang ${slotNum}...`}
+                              className="rounded border px-2 py-1 text-xs focus:outline-none"
+                              style={{
+                                borderColor: 'var(--app-border)',
+                                backgroundColor: 'var(--app-canvas)',
+                                color: 'var(--app-text)',
+                              }}
+                            />
+                            <input
+                              type="text"
+                              value={slot.dosage}
+                              onChange={(e) =>
+                                updateDualSlot(slotNum, {
+                                  ...slot,
+                                  category: slotCat,
+                                  dosage: e.target.value,
+                                })
+                              }
+                              placeholder={`Dosis barang ${slotNum}`}
+                              className="rounded border px-2 py-1 text-xs focus:outline-none"
+                              style={{
+                                borderColor: 'var(--app-border)',
+                                backgroundColor: 'var(--app-canvas)',
+                                color: 'var(--app-text)',
+                              }}
+                            />
+                            <input
+                              type="text"
+                              value={slot.active}
+                              onChange={(e) =>
+                                updateDualSlot(slotNum, {
+                                  ...slot,
+                                  category: slotCat,
+                                  active: e.target.value,
+                                })
+                              }
+                              placeholder={`Bahan aktif ${slotNum}`}
+                              className="rounded border px-2 py-1 text-xs focus:outline-none"
+                              style={{
+                                borderColor: 'var(--app-border)',
+                                backgroundColor: 'var(--app-canvas)',
+                                color: 'var(--app-text)',
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Mode Pengocoran: Tunggal vs Pengocoran Bersama (Multi-Obat) */}
+            {formType === 'pengocoran' && (
               <div
                 className="rounded-lg border p-3 space-y-2"
                 style={{
@@ -380,82 +785,174 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
                   backgroundColor: 'var(--app-canvas)',
                 }}
               >
-                <label className="block text-xs font-semibold">
-                  Kategori Penyemprotan
-                </label>
-                <div
-                  className="grid grid-cols-1 sm:grid-cols-3 gap-1 rounded-lg p-1"
-                  style={{ backgroundColor: 'var(--app-surface-muted)' }}
-                >
-                  {(['pupuk', 'insektisida', 'fungisida'] as SprayCategory[]).map((cat) => {
-                    const active = sprayCategory === cat;
-                    return (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => setSprayCategory(cat)}
-                        className="rounded-md py-1.5 px-2 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
-                        style={{
-                          backgroundColor: active ? 'var(--app-accent)' : 'transparent',
-                          color: active ? 'var(--app-accent-fg)' : 'var(--app-text-muted)',
-                        }}
-                      >
-                        {formatSprayLabel(cat)}
-                      </button>
-                    );
-                  })}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-xs font-semibold">
+                    Mode Pengocoran Obat
+                  </label>
+                  <div
+                    className="grid grid-cols-2 gap-1 rounded-lg p-1"
+                    style={{ backgroundColor: 'var(--app-surface-muted)' }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setDrenchMixMode('single')}
+                      className="rounded-md px-2.5 py-1 text-[11px] font-semibold cursor-pointer whitespace-nowrap"
+                      style={{
+                        backgroundColor: drenchMixMode === 'single' ? 'var(--app-surface)' : 'transparent',
+                        color: drenchMixMode === 'single' ? 'var(--app-accent)' : 'var(--app-text-muted)',
+                      }}
+                    >
+                      1 Jenis Obat
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDrenchMixMode('multi');
+                        if (drenchSelectedItems.length > 0) {
+                          syncMixItemsToForm(drenchSelectedItems);
+                        }
+                      }}
+                      className="rounded-md px-2.5 py-1 text-[11px] font-semibold cursor-pointer whitespace-nowrap"
+                      style={{
+                        backgroundColor: drenchMixMode === 'multi' ? 'var(--app-accent)' : 'transparent',
+                        color: drenchMixMode === 'multi' ? 'var(--app-accent-fg)' : 'var(--app-text-muted)',
+                      }}
+                    >
+                      Pengocoran Bersama (Multi)
+                    </button>
+                  </div>
                 </div>
                 <p className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
-                  {SPRAY_CATEGORY_LABELS[sprayCategory].desc}
+                  {drenchMixMode === 'multi'
+                    ? 'Klik beberapa obat sekaligus (mis. Agrept + Besromil + Velum) untuk dicampur kocor bersama.'
+                    : 'Pilih satu obat kocor (Agrept, Besromil, Velum, Trichoderma, dll.) atau isi manual.'}
                 </p>
               </div>
             )}
 
             {/* Quick Medicine Presets + Opsi Isi Manual */}
-            <div>
-              <div className="flex flex-wrap items-center justify-between gap-1 mb-1.5">
-                <span className="text-[11px] font-medium" style={{ color: 'var(--app-text-muted)' }}>
-                  Pilih {formType === 'penyemprotan' ? formatSprayLabel(sprayCategory) : TREATMENT_TYPE_LABELS[formType].short} atau Isi Manual:
-                </span>
-                {manualInputMode && (
-                  <span className="text-[11px] font-semibold" style={{ color: 'var(--app-accent)' }}>
-                    Mode Isi Manual Aktif
+            {(formType !== 'penyemprotan' || sprayMixMode === 'single') && (
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-1 mb-1.5">
+                  <span className="text-[11px] font-medium" style={{ color: 'var(--app-text-muted)' }}>
+                    {formType === 'pengocoran' && drenchMixMode === 'multi'
+                      ? `Pilih Lebih Dari 1 Obat Kocor (${drenchSelectedItems.length} dipilih):`
+                      : `Pilih ${formType === 'penyemprotan' ? formatSprayLabel(sprayCategory) : TREATMENT_TYPE_LABELS[formType].short} atau Isi Manual:`}
                   </span>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {activeSuggestions.map((s) => {
-                  const selected = !manualInputMode && medicineName === s.name;
-                  return (
+                  {manualInputMode && (
+                    <span className="text-[11px] font-semibold" style={{ color: 'var(--app-accent)' }}>
+                      Mode Isi Manual Aktif
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {activeSuggestions.map((s) => {
+                    const isDrenchMulti = formType === 'pengocoran' && drenchMixMode === 'multi';
+                    const selected = isDrenchMulti
+                      ? drenchSelectedItems.some((x) => x.name === s.name)
+                      : !manualInputMode && medicineName === s.name;
+                    return (
+                      <button
+                        key={s.name}
+                        type="button"
+                        onClick={() =>
+                          isDrenchMulti ? toggleDrenchMultiItem(s) : applySuggestion(s)
+                        }
+                        className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer"
+                        style={{
+                          borderColor: selected ? 'var(--app-accent)' : 'var(--app-border)',
+                          backgroundColor: selected ? 'var(--app-accent-soft)' : 'var(--app-surface-muted)',
+                          color: selected ? 'var(--app-accent)' : 'var(--app-text)',
+                        }}
+                      >
+                        {isDrenchMulti && selected && <Check className="h-3 w-3" />}
+                        <span>{s.name}</span>
+                      </button>
+                    );
+                  })}
+                  {!(formType === 'pengocoran' && drenchMixMode === 'multi') && (
                     <button
-                      key={s.name}
                       type="button"
-                      onClick={() => applySuggestion(s)}
-                      className="rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer"
+                      onClick={activateManualInput}
+                      className="rounded-md border px-2.5 py-1 text-[11px] font-semibold transition-colors cursor-pointer"
                       style={{
-                        borderColor: selected ? 'var(--app-accent)' : 'var(--app-border)',
-                        backgroundColor: selected ? 'var(--app-accent-soft)' : 'var(--app-surface-muted)',
-                        color: selected ? 'var(--app-accent)' : 'var(--app-text)',
+                        borderColor: manualInputMode ? 'var(--app-accent)' : 'var(--app-border)',
+                        backgroundColor: manualInputMode ? 'var(--app-accent)' : 'var(--app-surface)',
+                        color: manualInputMode ? 'var(--app-accent-fg)' : 'var(--app-accent)',
                       }}
                     >
-                      {s.name}
+                      + Isi Manual ({formType === 'penyemprotan' ? formatSprayLabel(sprayCategory) : TREATMENT_TYPE_LABELS[formType].short})
                     </button>
-                  );
-                })}
-                <button
-                  type="button"
-                  onClick={activateManualInput}
-                  className="rounded-md border px-2.5 py-1 text-[11px] font-semibold transition-colors cursor-pointer"
-                  style={{
-                    borderColor: manualInputMode ? 'var(--app-accent)' : 'var(--app-border)',
-                    backgroundColor: manualInputMode ? 'var(--app-accent)' : 'var(--app-surface)',
-                    color: manualInputMode ? 'var(--app-accent-fg)' : 'var(--app-accent)',
-                  }}
-                >
-                  + Isi Manual ({formType === 'penyemprotan' ? formatSprayLabel(sprayCategory) : TREATMENT_TYPE_LABELS[formType].short})
-                </button>
+                  )}
+                </div>
+
+                {/* Tambah obat manual ke campuran pengocoran bersama */}
+                {formType === 'pengocoran' && drenchMixMode === 'multi' && (
+                  <div
+                    className="mt-2.5 rounded-lg border p-2.5 space-y-2"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-canvas)',
+                    }}
+                  >
+                    <div className="text-[11px] font-medium" style={{ color: 'var(--app-text-muted)' }}>
+                      Tambah Obat Lain ke Campuran Kocor (Opsional):
+                    </div>
+                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                      <input
+                        type="text"
+                        value={customDrenchName}
+                        onChange={(e) => setCustomDrenchName(e.target.value)}
+                        placeholder="Nama obat..."
+                        className="rounded border px-2 py-1 text-xs focus:outline-none"
+                        style={{
+                          borderColor: 'var(--app-border)',
+                          backgroundColor: 'var(--app-surface)',
+                          color: 'var(--app-text)',
+                        }}
+                      />
+                      <input
+                        type="text"
+                        value={customDrenchActive}
+                        onChange={(e) => setCustomDrenchActive(e.target.value)}
+                        placeholder="Bahan aktif..."
+                        className="rounded border px-2 py-1 text-xs focus:outline-none"
+                        style={{
+                          borderColor: 'var(--app-border)',
+                          backgroundColor: 'var(--app-surface)',
+                          color: 'var(--app-text)',
+                        }}
+                      />
+                      <div className="flex gap-1">
+                        <input
+                          type="text"
+                          value={customDrenchDosage}
+                          onChange={(e) => setCustomDrenchDosage(e.target.value)}
+                          placeholder="Dosis..."
+                          className="w-full rounded border px-2 py-1 text-xs focus:outline-none"
+                          style={{
+                            borderColor: 'var(--app-border)',
+                            backgroundColor: 'var(--app-surface)',
+                            color: 'var(--app-text)',
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={addCustomDrenchItem}
+                          className="rounded px-2 py-1 text-[11px] font-semibold shrink-0 cursor-pointer"
+                          style={{
+                            backgroundColor: 'var(--app-accent)',
+                            color: 'var(--app-accent-fg)',
+                          }}
+                        >
+                          +Tambah
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
+            )}
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
@@ -650,17 +1147,33 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
               </div>
             </div>
 
-            <button
-              type="submit"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90 cursor-pointer"
-              style={{
-                backgroundColor: 'var(--app-accent)',
-                color: 'var(--app-accent-fg)',
-              }}
-            >
-              <Plus className="h-4 w-4" />
-              Simpan Perawatan ke {gh.name}
-            </button>
+            <div className="flex gap-2">
+              {editingTreatmentId && (
+                <button
+                  type="button"
+                  onClick={resetFormAfterSaveOrCancel}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border px-4 py-2.5 text-sm font-medium cursor-pointer"
+                  style={{
+                    borderColor: 'var(--app-border)',
+                    backgroundColor: 'var(--app-surface-muted)',
+                    color: 'var(--app-text)',
+                  }}
+                >
+                  Batal Edit
+                </button>
+              )}
+              <button
+                type="submit"
+                className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90 cursor-pointer"
+                style={{
+                  backgroundColor: 'var(--app-accent)',
+                  color: 'var(--app-accent-fg)',
+                }}
+              >
+                {editingTreatmentId ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                {editingTreatmentId ? 'Simpan Perubahan Perawatan' : `Simpan Perawatan ke ${gh.name}`}
+              </button>
+            </div>
           </form>
         </section>
 
@@ -966,7 +1479,7 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
                         <div className="flex flex-wrap items-center gap-2 text-xs" style={{ color: 'var(--app-text-muted)' }}>
                           <span className="inline-flex items-center gap-1 font-semibold" style={{ color: 'var(--app-accent)' }}>
                             {renderTypeIcon(item.type)}
-                            {TREATMENT_TYPE_LABELS[item.type].short}
+                            {TREATMENT_TYPE_LABELS[item.type]?.short || item.type}
                             {spraySub}
                           </span>
                           <span aria-hidden="true">·</span>
@@ -1037,6 +1550,21 @@ export const DashboardTreatments: React.FC<DashboardTreatmentsProps> = ({
                       >
                         <Check className="h-3.5 w-3.5" />
                         {isDone ? 'Buka Ulang' : 'Tandai Selesai'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => startEditingTreatment(item)}
+                        title="Edit catatan perawatan ini"
+                        className="inline-flex items-center gap-1 rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors cursor-pointer whitespace-nowrap"
+                        style={{
+                          borderColor: editingTreatmentId === item.id ? 'var(--app-accent)' : 'var(--app-border)',
+                          backgroundColor: editingTreatmentId === item.id ? 'var(--app-accent-soft)' : 'transparent',
+                          color: editingTreatmentId === item.id ? 'var(--app-accent)' : 'var(--app-text)',
+                        }}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        <span>Edit</span>
                       </button>
 
                       <button

@@ -71,16 +71,23 @@ export const GreenhouseModal: React.FC<GreenhouseModalProps> = ({
       setPpm('750');
       setPh('6.7');
     } else {
-      setName(activeGh.name);
-      setVariety(activeGh.variety);
-      setCapacity(String(activeGh.capacity));
-      setGulliesCount(String(activeGh.gulliesCount));
-      setReservoirLiters(String(activeGh.reservoirLiters));
-      setPlantingDate(activeGh.plantingDate);
+      setName(activeGh.name || 'GH');
+      setVariety(activeGh.variety || '');
+      setCapacity(String(activeGh.capacity || 1000));
+      setGulliesCount(String(activeGh.gulliesCount || 20));
+      setReservoirLiters(String(activeGh.reservoirLiters || 2000));
+      setPlantingDate(activeGh.plantingDate || new Date().toISOString().slice(0, 10));
       setHarvestDate(activeGh.harvestDate || '');
-      setPhase(activeGh.phase);
-      setPpm(String(activeGh.currentWater.ppm));
-      setPh(String(activeGh.currentWater.ph));
+      setPhase(
+        activeGh.phase === 'semai' ||
+          activeGh.phase === 'vegetatif' ||
+          activeGh.phase === 'generatif' ||
+          activeGh.phase === 'pembesaran'
+          ? activeGh.phase
+          : 'vegetatif'
+      );
+      setPpm(String(activeGh.currentWater?.ppm ?? 750));
+      setPh(String(activeGh.currentWater?.ph ?? 6.5));
     }
   }, [isOpen, mode, activeGh, ghCount]);
 

@@ -294,11 +294,12 @@ function buildSampleExpenses(ghName: string, variety: string): ProductionExpense
       date: daysAgo(10),
       category: 'tenaga_kerja',
       itemName: 'Tenaga Polinasi & Seleksi Buah',
-      quantity: 6,
-      unit: 'HOK',
+      quantity: 3,
+      unit: 'orang',
+      workHours: 8,
       unitPrice: 125000,
-      totalCost: 750000,
-      notes: '3 pekerja x 2 hari polinasi serempak',
+      totalCost: 375000,
+      notes: '3 orang pekerja x 8 jam kerja polinasi serempak',
     },
   ];
 }
@@ -464,6 +465,141 @@ export function saveSettings(settings: AppSettings): void {
   }
 }
 
+const VALID_PHASES: GrowthPhase[] = ['semai', 'vegetatif', 'generatif', 'pembesaran'];
+const VALID_HEALTH_STATUSES: PlantHealthStatus[] = ['sehat', 'perhatian', 'sakit', 'panen', 'kosong'];
+
+export function normalizeCurrentWater(
+  raw: Partial<GreenhouseData['currentWater']> | undefined,
+  ecFactor: 500 | 700 = 500
+): GreenhouseData['currentWater'] {
+  const ppm = Number(raw?.ppm ?? 750);
+  const safePpm = Number.isFinite(ppm) ? ppm : 750;
+  const ecRaw = Number(raw?.ec);
+  const safeEc = Number.isFinite(ecRaw) ? ecRaw : Number((safePpm / ecFactor).toFixed(2));
+  const phRaw = Number(raw?.ph ?? 6.5);
+  const tempRaw = Number(raw?.tempC ?? 25.0);
+  const flowRaw = Number(raw?.flowLpm ?? 18.0);
+  const resRaw = Number(raw?.reservoirPct ?? 85);
+  return {
+    ppm: safePpm,
+    ec: safeEc,
+    ph: Number.isFinite(phRaw) ? phRaw : 6.5,
+    tempC: Number.isFinite(tempRaw) ? tempRaw : 25.0,
+    flowLpm: Number.isFinite(flowRaw) ? flowRaw : 18.0,
+    reservoirPct: Number.isFinite(resRaw) ? resRaw : 85,
+    pumpCirculation: raw?.pumpCirculation !== undefined ? Boolean(raw.pumpCirculation) : true,
+    pumpNutrientA: Boolean(raw?.pumpNutrientA),
+    pumpNutrientB: Boolean(raw?.pumpNutrientB),
+    pumpPhDown: Boolean(raw?.pumpPhDown),
+    pumpPhUp: Boolean(raw?.pumpPhUp),
+  };
+}
+
+export function normalizePlant(raw: Partial<PlantCondition>, fallbackId = 1): PlantCondition {
+  const id = Number(raw?.id) || fallbackId;
+  const status: PlantHealthStatus = VALID_HEALTH_STATUSES.includes(raw?.status as PlantHealthStatus)
+    ? (raw.status as PlantHealthStatus)
+    : 'sehat';
+  const fruitCount = Math.max(0, Number(raw?.fruitCount) || 0);
+  const fruitingStatus =
+    raw?.fruitingStatus === 'berbuah' || raw?.fruitingStatus === 'tidak_berbuah'
+      ? raw.fruitingStatus
+      : fruitCount > 0
+      ? 'berbuah'
+      : 'tidak_berbuah';
+  const fruitQuality = raw?.fruitQuality === 'jelek' ? 'jelek' : 'bagus';
+  const fruitWeights = Array.isArray(raw?.fruitWeights)
+    ? raw.fruitWeights.map((w) => Math.max(0, Number(w) || 0))
+    : undefined;
+  return {
+    id,
+    status,
+    fruitingStatus,
+    fruitQuality,
+    symptom: typeof raw?.symptom === 'string' ? raw.symptom : '',
+    heightCm: Number(raw?.heightCm) || 0,
+    fruitCount,
+    fruitWeights,
+    estWeightKg: Number(raw?.estWeightKg) || 0,
+    brix: Number(raw?.brix) || 0,
+    lastAction: typeof raw?.lastAction === 'string' ? raw.lastAction : '',
+    notes: typeof raw?.notes === 'string' ? raw.notes : '',
+    harvestDate: typeof raw?.harvestDate === 'string' ? raw.harvestDate : '',
+    inspectionDate: typeof raw?.inspectionDate === 'string' ? raw.inspectionDate : '',
+    updatedAt: typeof raw?.updatedAt === 'string' && raw.updatedAt ? raw.updatedAt : new Date().toISOString(),
+  };
+}
+
+export function normalizeGreenhouse(raw: Partial<GreenhouseData>, idx = 0): GreenhouseData {
+  const phase: GrowthPhase = VALID_PHASES.includes(raw?.phase as GrowthPhase)
+    ? (raw.phase as GrowthPhase)
+    : 'vegetatif';
+  const ecFactor: 500 | 700 = raw?.ecFactor === 700 ? 700 : 500;
+  const capacity = Math.min(5000, Math.max(1, Number(raw?.capacity) || 1000));
+  const rawPlants = Array.isArray(raw?.plants)
+    ? raw.plants.map((p, pIdx) => normalizePlant(p, pIdx + 1))
+    : [];
+  const plants =
+    rawPlants.length > 0 ? rawPlants : generatePlants(capacity, idx + 1, phase, true);
+
+  return {
+    id: typeof raw?.id === 'string' && raw.id.trim() ? raw.id : `gh-${idx + 1}`,
+    name: typeof raw?.name === 'string' && raw.name.trim() ? raw.name : `GH ${idx + 1}`,
+    variety: typeof raw?.variety === 'string' ? raw.variety : 'Melon Hidroponik NFT',
+    capacity,
+    gulliesCount: Math.max(1, Number(raw?.gulliesCount) || Math.ceil(capacity / 50)),
+    reservoirLiters: Math.max(100, Number(raw?.reservoirLiters) || 2000),
+    plantingDate:
+      typeof raw?.plantingDate === 'string' && raw.plantingDate
+        ? raw.plantingDate
+        : new Date().toISOString().slice(0, 10),
+    harvestDate: typeof raw?.harvestDate === 'string' ? raw.harvestDate : '',
+    phase,
+    ecFactor,
+    avgMelonWeightKg:
+      typeof raw?.avgMelonWeightKg === 'number' && Number.isFinite(raw.avgMelonWeightKg)
+        ? raw.avgMelonWeightKg
+        : 1.5,
+    waterTargets:
+      raw?.waterTargets && typeof raw.waterTargets === 'object'
+        ? {
+            useCustom: Boolean(raw.waterTargets.useCustom),
+            ppmMin: Number(raw.waterTargets.ppmMin) || 500,
+            ppmMax: Number(raw.waterTargets.ppmMax) || 1000,
+            phMin: Number(raw.waterTargets.phMin) || 6.5,
+            phMax: Number(raw.waterTargets.phMax) || 7.0,
+          }
+        : undefined,
+    currentWater: normalizeCurrentWater(raw?.currentWater, ecFactor),
+    waterLogs: Array.isArray(raw?.waterLogs) ? raw.waterLogs : [],
+    treatments: Array.isArray(raw?.treatments) ? raw.treatments : [],
+    plants,
+    expenses: Array.isArray(raw?.expenses) ? raw.expenses : [],
+    sales: Array.isArray(raw?.sales) ? raw.sales : [],
+  };
+}
+
+export function normalizeSeasonDocument(raw: Partial<SeasonDocument>, idx = 0): SeasonDocument {
+  const now = new Date().toISOString();
+  const rawGhs = Array.isArray(raw?.greenhouses) ? raw.greenhouses : [];
+  const greenhouses =
+    rawGhs.length > 0
+      ? rawGhs.map((g, gIdx) => normalizeGreenhouse(g, gIdx))
+      : [createGreenhouse('gh-1', 'GH 1', 'Melon Inthanon RZ', 1000, 'semai', 600, 6.6, 1, true)];
+  const activeGhId = greenhouses.some((g) => g.id === raw?.activeGhId)
+    ? String(raw?.activeGhId)
+    : greenhouses[0].id;
+  return {
+    id: typeof raw?.id === 'string' && raw.id.trim() ? raw.id : `season-${Date.now()}-${idx}`,
+    title: typeof raw?.title === 'string' && raw.title.trim() ? raw.title : `Musim Tanam ${idx + 1}`,
+    createdAt: typeof raw?.createdAt === 'string' && raw.createdAt ? raw.createdAt : now,
+    updatedAt: typeof raw?.updatedAt === 'string' && raw.updatedAt ? raw.updatedAt : now,
+    notes: typeof raw?.notes === 'string' ? raw.notes : '',
+    activeGhId,
+    greenhouses,
+  };
+}
+
 export function loadDocuments(): { documents: SeasonDocument[]; activeDocId: string } {
   try {
     const raw = localStorage.getItem(DOCS_KEY);
@@ -479,19 +615,9 @@ export function loadDocuments(): { documents: SeasonDocument[]; activeDocId: str
       saveDocuments([initial], initial.id);
       return { documents: [initial], activeDocId: initial.id };
     }
-    const normalized: SeasonDocument[] = parsed.map((doc) => ({
-      ...doc,
-      greenhouses: Array.isArray(doc.greenhouses)
-        ? doc.greenhouses.map((gh) => ({
-            ...gh,
-            waterLogs: Array.isArray(gh.waterLogs) ? gh.waterLogs : [],
-            treatments: Array.isArray(gh.treatments) ? gh.treatments : [],
-            plants: Array.isArray(gh.plants) ? gh.plants : [],
-            expenses: Array.isArray(gh.expenses) ? gh.expenses : [],
-            sales: Array.isArray(gh.sales) ? gh.sales : [],
-          }))
-        : [],
-    }));
+    const normalized: SeasonDocument[] = parsed.map((doc, idx) =>
+      normalizeSeasonDocument(doc, idx)
+    );
     const validActive = normalized.some((d) => d.id === activeId) ? activeId : normalized[0].id;
     return { documents: normalized, activeDocId: validActive };
   } catch {

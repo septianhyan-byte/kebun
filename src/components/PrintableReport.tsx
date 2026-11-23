@@ -34,7 +34,7 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
   printSelection,
   previewMode = false,
 }) => {
-  const phaseSpec = GROWTH_PHASE_SPECS[activeGh.phase];
+  const phaseSpec = GROWTH_PHASE_SPECS[activeGh.phase] || GROWTH_PHASE_SPECS.vegetatif;
   const useCustomTargets = Boolean(activeGh.waterTargets?.useCustom);
   const targetPpmMin = useCustomTargets
     ? activeGh.waterTargets?.ppmMin ?? phaseSpec.ppmMin
@@ -66,7 +66,7 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
     (p) => p.status === 'sakit' || p.status === 'perhatian'
   );
 
-  // Average melon weight & total harvest estimate
+  // Average melon weight & total harvest estimate (based on weighed fruits, separated by good vs bad)
   let sampledCount = 0;
   let sampledFruitCount = 0;
   let totalSampleKg = 0;
@@ -75,17 +75,31 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
   let badPlants = 0;
   let goodFruits = 0;
   let badFruits = 0;
+  let goodSampledFruitCount = 0;
+  let badSampledFruitCount = 0;
+  let goodSampleKg = 0;
+  let badSampleKg = 0;
   for (const p of activeGh.plants) {
     if (p.status === 'kosong') continue;
-    if (p.estWeightKg > 0) {
-      sampledCount += 1;
-      totalSampleKg += p.estWeightKg;
-      const posWeights = Array.isArray(p.fruitWeights)
-        ? p.fruitWeights.filter((w) => Number(w) > 0)
-        : [];
-      sampledFruitCount +=
-        posWeights.length > 0 ? posWeights.length : Math.max(1, p.fruitCount || 1);
+    const posWeights = Array.isArray(p.fruitWeights)
+      ? p.fruitWeights.map((w) => Math.max(0, Number(w) || 0)).filter((w) => w > 0)
+      : [];
+    let plantWeighedKg = 0;
+    let plantWeighedFruits = 0;
+    if (posWeights.length > 0) {
+      plantWeighedKg = posWeights.reduce((a, b) => a + b, 0);
+      plantWeighedFruits = posWeights.length;
+    } else if (p.estWeightKg > 0) {
+      plantWeighedKg = p.estWeightKg;
+      plantWeighedFruits = Math.max(1, p.fruitCount || 1);
     }
+
+    if (plantWeighedFruits > 0 && plantWeighedKg > 0) {
+      sampledCount += 1;
+      sampledFruitCount += plantWeighedFruits;
+      totalSampleKg += plantWeighedKg;
+    }
+
     const isFruit = p.fruitingStatus ? p.fruitingStatus === 'berbuah' : p.fruitCount > 0;
     if (isFruit) {
       const qty = Math.max(1, p.fruitCount || 0);
@@ -93,22 +107,36 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
       if (p.fruitQuality === 'jelek') {
         badPlants += 1;
         badFruits += qty;
+        if (plantWeighedFruits > 0 && plantWeighedKg > 0) {
+          badSampledFruitCount += plantWeighedFruits;
+          badSampleKg += plantWeighedKg;
+        }
       } else {
         goodPlants += 1;
         goodFruits += qty;
+        if (plantWeighedFruits > 0 && plantWeighedKg > 0) {
+          goodSampledFruitCount += plantWeighedFruits;
+          goodSampleKg += plantWeighedKg;
+        }
       }
     }
   }
-  const sampleAvgKg = sampledFruitCount > 0 ? totalSampleKg / sampledFruitCount : 0;
-  const effectiveAvgKg =
-    typeof activeGh.avgMelonWeightKg === 'number' && !Number.isNaN(activeGh.avgMelonWeightKg)
-      ? activeGh.avgMelonWeightKg
-      : sampleAvgKg > 0
-      ? Number(sampleAvgKg.toFixed(2))
-      : 1.5;
-  const estimatedTotalKg = totalFruits * effectiveAvgKg;
-  const goodEstimatedKg = goodFruits * effectiveAvgKg;
-  const badEstimatedKg = badFruits * effectiveAvgKg;
+  const hasWeighedFruits = sampledFruitCount > 0;
+  const sampleAvgKg = hasWeighedFruits ? totalSampleKg / sampledFruitCount : 0;
+  const goodSampleAvgKg = goodSampledFruitCount > 0 ? goodSampleKg / goodSampledFruitCount : 0;
+  const badSampleAvgKg = badSampledFruitCount > 0 ? badSampleKg / badSampledFruitCount : 0;
+  const effectiveAvgKg = hasWeighedFruits
+    ? Number(sampleAvgKg.toFixed(2))
+    : typeof activeGh.avgMelonWeightKg === 'number' && !Number.isNaN(activeGh.avgMelonWeightKg)
+    ? activeGh.avgMelonWeightKg
+    : 0;
+  const goodEffectiveAvgKg =
+    goodSampledFruitCount > 0 ? Number(goodSampleAvgKg.toFixed(2)) : effectiveAvgKg;
+  const badEffectiveAvgKg =
+    badSampledFruitCount > 0 ? Number(badSampleAvgKg.toFixed(2)) : effectiveAvgKg;
+  const goodEstimatedKg = goodFruits * goodEffectiveAvgKg;
+  const badEstimatedKg = badFruits * badEffectiveAvgKg;
+  const estimatedTotalKg = totalFruits > 0 ? goodEstimatedKg + badEstimatedKg : 0;
 
   // Accounting metrics
   const expenses = activeGh.expenses || [];
@@ -131,16 +159,21 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
   );
 
   // Annual summary across allDocuments
+  const fallbackYear =
+    String(new Date().getFullYear());
   const annualMap = new Map<string, { exp: number; sal: number; kg: number }>();
   for (const docItem of allDocuments) {
+    const docYear = /^\d{4}/.test(String(docItem.createdAt || ''))
+      ? String(docItem.createdAt).slice(0, 4)
+      : fallbackYear;
     for (const g of docItem.greenhouses) {
       for (const e of g.expenses || []) {
-        const yr = /^\d{4}/.test(e.date) ? e.date.slice(0, 4) : docItem.createdAt.slice(0, 4);
+        const yr = /^\d{4}/.test(String(e.date || '')) ? String(e.date).slice(0, 4) : docYear;
         if (!annualMap.has(yr)) annualMap.set(yr, { exp: 0, sal: 0, kg: 0 });
         annualMap.get(yr)!.exp += e.totalCost || 0;
       }
       for (const s of g.sales || []) {
-        const yr = /^\d{4}/.test(s.date) ? s.date.slice(0, 4) : docItem.createdAt.slice(0, 4);
+        const yr = /^\d{4}/.test(String(s.date || '')) ? String(s.date).slice(0, 4) : docYear;
         if (!annualMap.has(yr)) annualMap.set(yr, { exp: 0, sal: 0, kg: 0 });
         annualMap.get(yr)!.sal += s.totalAmount || 0;
         annualMap.get(yr)!.kg += s.weightKg || 0;
@@ -201,7 +234,7 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
             <div>
               <div className="text-gray-500">PPM / EC</div>
               <div className="font-bold font-mono-tabular text-sm">
-                {activeGh.currentWater.ppm} ppm ({activeGh.currentWater.ec.toFixed(2)} mS)
+                {Number(activeGh.currentWater?.ppm ?? 0)} ppm ({Number(activeGh.currentWater?.ec ?? 0).toFixed(2)} mS)
               </div>
               <div className="text-[10px] text-gray-500 font-mono-tabular">
                 Target: {targetPpmMin}–{targetPpmMax} ppm{useCustomTargets ? ' (Pemeriksa)' : ''}
@@ -210,23 +243,23 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
             <div>
               <div className="text-gray-500">pH Larutan</div>
               <div className="font-bold font-mono-tabular text-sm">
-                {activeGh.currentWater.ph.toFixed(2)}
+                {Number(activeGh.currentWater?.ph ?? 0).toFixed(2)}
               </div>
               <div className="text-[10px] text-gray-500 font-mono-tabular">
-                Target: {targetPhMin.toFixed(1)}–{targetPhMax.toFixed(1)}
+                Target: {Number(targetPhMin ?? 0).toFixed(1)}–{Number(targetPhMax ?? 0).toFixed(1)}
                 {useCustomTargets ? ' (Pemeriksa)' : ''}
               </div>
             </div>
             <div>
               <div className="text-gray-500">Suhu &amp; Debit</div>
               <div className="font-bold font-mono-tabular text-sm">
-                {activeGh.currentWater.tempC.toFixed(1)}°C · {activeGh.currentWater.flowLpm} L/mnt
+                {Number(activeGh.currentWater?.tempC ?? 0).toFixed(1)}°C · {Number(activeGh.currentWater?.flowLpm ?? 0)} L/mnt
               </div>
             </div>
             <div>
               <div className="text-gray-500">Tandon Utama</div>
               <div className="font-bold font-mono-tabular text-sm">
-                {activeGh.currentWater.reservoirPct}% ({activeGh.reservoirLiters} L)
+                {Number(activeGh.currentWater?.reservoirPct ?? 0)}% ({activeGh.reservoirLiters} L)
               </div>
             </div>
           </div>
@@ -269,7 +302,7 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
                         {l.ppmBefore ?? l.ppm} → {l.ppm}
                       </td>
                       <td className="border border-gray-300 px-2 py-1 text-right font-mono-tabular">
-                        {(l.phBefore ?? l.ph).toFixed(2)} → {l.ph.toFixed(2)}
+                        {Number(l.phBefore ?? l.ph ?? 0).toFixed(2)} → {Number(l.ph ?? 0).toFixed(2)}
                       </td>
                       <td className="border border-gray-300 px-2 py-1 font-mono-tabular">
                         {(l.waterAddedLiters || 0) > 0 ? `Air +${l.waterAddedLiters}L ` : ''}
@@ -311,7 +344,7 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
                 {activeGh.treatments.map((t) => (
                   <tr key={t.id}>
                     <td className="border border-gray-300 px-2 py-1 font-medium">
-                      {TREATMENT_TYPE_LABELS[t.type].short}
+                      {TREATMENT_TYPE_LABELS[t.type]?.short || t.type}
                       {t.type === 'penyemprotan' && t.sprayCategory
                         ? ` (${t.sprayCategory})`
                         : ''}
@@ -372,18 +405,35 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
           <div className="grid grid-cols-4 gap-2 text-xs border border-gray-300 bg-gray-50 p-2.5 rounded">
             <div>
               <div className="text-gray-500">Rata-Rata Berat / Buah</div>
-              <div className="font-bold font-mono-tabular">{effectiveAvgKg.toFixed(2)} kg</div>
+              <div className="font-bold font-mono-tabular">
+                {hasWeighedFruits ? `${sampleAvgKg.toFixed(2)} kg` : `${effectiveAvgKg.toFixed(2)} kg`}
+              </div>
+              <div className="text-[10px] font-mono-tabular text-gray-600 mt-0.5">
+                {sampledFruitCount > 0 ? `${sampledFruitCount} buah ditimbang` : 'Estimasi manual'}
+              </div>
             </div>
             <div>
               <div className="text-gray-500">Total Buah Aktif</div>
               <div className="font-bold font-mono-tabular">
                 {totalFruits.toLocaleString('id-ID')} buah
               </div>
+              <div className="text-[10px] font-mono-tabular text-gray-600 mt-0.5">
+                {totalSampleKg.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg ({sampledCount} phn)
+              </div>
             </div>
             <div>
-              <div className="text-gray-500">Sampel Bobot Tercatat</div>
-              <div className="font-bold font-mono-tabular">
-                {totalSampleKg.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg ({sampledCount} phn)
+              <div className="text-gray-500">Rata-Rata Bagus / Jelek</div>
+              <div className="text-[11px] font-mono-tabular">
+                Bagus:{' '}
+                <strong>
+                  {goodSampledFruitCount > 0 ? `${goodSampleAvgKg.toFixed(2)} kg` : 'Belum ditimbang'}
+                </strong>
+              </div>
+              <div className="text-[11px] font-mono-tabular">
+                Jelek:{' '}
+                <strong>
+                  {badSampledFruitCount > 0 ? `${badSampleAvgKg.toFixed(2)} kg` : 'Belum ditimbang'}
+                </strong>
               </div>
             </div>
             <div>
@@ -480,6 +530,7 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
                   <th className="border border-gray-300 px-2 py-1 text-left">Kategori</th>
                   <th className="border border-gray-300 px-2 py-1 text-left">Nama Item</th>
                   <th className="border border-gray-300 px-2 py-1 text-right">Qty</th>
+                  <th className="border border-gray-300 px-2 py-1 text-right">Jam Kerja</th>
                   <th className="border border-gray-300 px-2 py-1 text-right">Harga Satuan</th>
                   <th className="border border-gray-300 px-2 py-1 text-right">Total Biaya</th>
                 </tr>
@@ -499,6 +550,9 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
                     </td>
                     <td className="border border-gray-300 px-2 py-1 text-right font-mono-tabular">
                       {e.quantity} {e.unit}
+                    </td>
+                    <td className="border border-gray-300 px-2 py-1 text-right font-mono-tabular">
+                      {typeof e.workHours === 'number' && e.workHours > 0 ? `${e.workHours} jam` : '—'}
                     </td>
                     <td className="border border-gray-300 px-2 py-1 text-right font-mono-tabular">
                       {fmtRp(e.unitPrice)}
@@ -563,7 +617,7 @@ export const PrintableReport: React.FC<PrintableReportProps> = ({
                     </td>
                     <td className="border border-gray-300 px-2 py-1 font-semibold">{s.grade}</td>
                     <td className="border border-gray-300 px-2 py-1 text-right font-mono-tabular">
-                      {s.weightKg.toLocaleString('id-ID')} kg
+                      {(s.weightKg ?? 0).toLocaleString('id-ID')} kg
                     </td>
                     <td className="border border-gray-300 px-2 py-1 text-right font-mono-tabular">
                       {fmtRp(s.pricePerKg)}

@@ -23,16 +23,9 @@ service cloud.firestore {
       return resource.data;
     }
 
-    function isAllowedEmail() {
-      return 'email' in request.auth.token
-        && request.auth.token.email is string
-        && request.auth.token.email in ['septianhyan@gmail.com'];
-    }
-
     function isSignedIn() {
       return request.auth != null
-        && request.auth.token.email_verified == true
-        && isAllowedEmail();
+        && request.auth.token.email_verified == true;
     }
 
     function isOwner(userId) {
@@ -180,9 +173,9 @@ service cloud.firestore {
         && data.ownerUid == request.auth.uid
         && data.type in ['penyemprotan', 'pengolesan', 'pengocoran']
         && (!('sprayCategory' in data) || data.sprayCategory in ['pupuk', 'insektisida', 'fungisida', ''])
-        && isNonEmptyString(data.medicineName, 160)
-        && isStringBounded(data.activeIngredient, 160)
-        && isStringBounded(data.dosage, 120)
+        && isNonEmptyString(data.medicineName, 300)
+        && isStringBounded(data.activeIngredient, 500)
+        && isStringBounded(data.dosage, 240)
         && isStringBounded(data.targetPlants, 160)
         && isStringBounded(data.scheduledAt, 64)
         && (!('completedAt' in data) || isStringBounded(data.completedAt, 64))
@@ -213,7 +206,7 @@ service cloud.firestore {
 
     function isValidProductionExpenseItem(data) {
       return data.keys().hasAll(['id', 'ownerUid', 'date', 'category', 'itemName', 'quantity', 'unit', 'unitPrice', 'totalCost', 'notes', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'ownerUid', 'date', 'category', 'itemName', 'quantity', 'unit', 'unitPrice', 'totalCost', 'notes', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'date', 'category', 'itemName', 'quantity', 'unit', 'workHours', 'unitPrice', 'totalCost', 'notes', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && isValidId(data.ownerUid)
         && data.ownerUid == request.auth.uid
@@ -223,6 +216,7 @@ service cloud.firestore {
         && data.quantity is number
         && data.quantity >= 0
         && isStringBounded(data.unit, 40)
+        && (!('workHours' in data) || (data.workHours is number && data.workHours >= 0 && data.workHours <= 10000))
         && data.unitPrice is number
         && data.unitPrice >= 0
         && data.totalCost is number
@@ -429,7 +423,7 @@ service cloud.firestore {
             && incoming().id == existing().id
             && incoming().createdAt == existing().createdAt
             && incoming().updatedAt == request.time
-            && incoming().diff(existing()).affectedKeys().hasOnly(['note', 'operator', 'updatedAt']);
+            && incoming().diff(existing()).affectedKeys().hasOnly(['timestamp', 'plantAgeHst', 'ppmBefore', 'ppm', 'ec', 'phBefore', 'ph', 'tempC', 'flowLpm', 'reservoirPct', 'waterAddedLiters', 'nutrientAddedLiters', 'abMixAddedMl', 'phAdjMl', 'phAdjType', 'phChemical', 'source', 'operator', 'note', 'updatedAt']);
           allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(logId) && existing().ownerUid == request.auth.uid;
         }
 
@@ -519,7 +513,7 @@ service cloud.firestore {
             && incoming().id == existing().id
             && incoming().createdAt == existing().createdAt
             && incoming().updatedAt == request.time
-            && incoming().diff(existing()).affectedKeys().hasOnly(['date', 'category', 'itemName', 'quantity', 'unit', 'unitPrice', 'totalCost', 'notes', 'updatedAt']);
+            && incoming().diff(existing()).affectedKeys().hasOnly(['date', 'category', 'itemName', 'quantity', 'unit', 'workHours', 'unitPrice', 'totalCost', 'notes', 'updatedAt']);
           allow delete: if isOwner(userId) && isValidId(seasonId) && isValidId(ghId) && isValidId(expenseId) && existing().ownerUid == request.auth.uid;
         }
 

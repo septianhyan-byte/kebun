@@ -8,6 +8,7 @@ import {
   Download,
   Droplets,
   Gauge,
+  Pencil,
   Plus,
   Power,
   RotateCcw,
@@ -16,6 +17,7 @@ import {
   Thermometer,
   Trash2,
   Waves,
+  X,
 } from 'lucide-react';
 import { GROWTH_PHASE_SPECS } from '../constants/themes';
 import { GreenhouseData, GrowthPhase, NotificationSettings, WaterLogEntry } from '../types';
@@ -59,7 +61,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
   notifSettings,
   onUpdateGh,
 }) => {
-  const phaseSpec = GROWTH_PHASE_SPECS[gh.phase];
+  const phaseSpec = GROWTH_PHASE_SPECS[gh.phase] || GROWTH_PHASE_SPECS.vegetatif;
   const { currentWater } = gh;
   const latestLog = gh.waterLogs[0];
 
@@ -103,6 +105,8 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     computeSuggestedPlantAgeHst(gh, toLocalDateTimeInputValue())
   );
   const [hstManualOverride, setHstManualOverride] = useState(false);
+  const [editingLogId, setEditingLogId] = useState<string | null>(null);
+  const formSectionRef = useRef<HTMLElement | null>(null);
 
   // Quick-jump focus & highlight from KPI result cards
   const [highlightedTarget, setHighlightedTarget] = useState<
@@ -151,6 +155,14 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     }, 320);
   };
 
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
+
   // History filter, selection & chart hover
   const [logFilter, setLogFilter] = useState<'all' | 'manual' | 'dosing'>('all');
   const [dateFilter, setDateFilter] = useState<string>('');
@@ -181,6 +193,8 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     setPhChemical('none');
     setPhAdjMl('0');
     setManualOperator('');
+    setManualNote('');
+    setEditingLogId(null);
     setInspectionDateTime(nowInput);
     setPlantAgeHst(computeSuggestedPlantAgeHst(gh, nowInput));
     setHstManualOverride(false);
@@ -359,6 +373,65 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     }));
   };
 
+  const resetWaterForm = () => {
+    const nowInput = toLocalDateTimeInputValue();
+    setEditingLogId(null);
+    setPpmBefore('');
+    setPpmAfter('');
+    setPhBefore('');
+    setPhAfter('');
+    setWaterAddedLiters('0');
+    setNutrientAddedLiters('0');
+    setPhChemical('none');
+    setPhAdjMl('0');
+    setManualTemp(String(gh.currentWater.tempC));
+    setManualFlow(String(gh.currentWater.flowLpm));
+    setManualReservoir(String(gh.currentWater.reservoirPct));
+    setManualOperator('');
+    setManualNote('');
+    setInspectionDateTime(nowInput);
+    setPlantAgeHst(computeSuggestedPlantAgeHst(gh, nowInput));
+    setHstManualOverride(false);
+  };
+
+  const startEditingLog = (log: WaterLogEntry) => {
+    const localDt = toLocalDateTimeInputValue(new Date(log.timestamp));
+    setEditingLogId(log.id);
+    setInspectionDateTime(localDt);
+    if (typeof log.plantAgeHst === 'number' && log.plantAgeHst >= 1 && log.plantAgeHst <= 75) {
+      setPlantAgeHst(log.plantAgeHst);
+      setHstManualOverride(true);
+    } else {
+      setPlantAgeHst(computeSuggestedPlantAgeHst(gh, localDt));
+      setHstManualOverride(false);
+    }
+    setPpmBefore(String(log.ppmBefore ?? log.ppm));
+    setPpmAfter(String(log.ppm));
+    setPhBefore(String(log.phBefore ?? log.ph));
+    setPhAfter(String(log.ph));
+    setWaterAddedLiters(String(log.waterAddedLiters ?? 0));
+    const nutL =
+      log.nutrientAddedLiters ??
+      (log.abMixAddedMl > 0 ? Number((log.abMixAddedMl / 1000).toFixed(2)) : 0);
+    setNutrientAddedLiters(String(nutL));
+    const derivedChem: 'none' | 'KOH' | 'Phosphoric' =
+      log.phChemical === 'KOH' || log.phChemical === 'Phosphoric' || log.phChemical === 'none'
+        ? log.phChemical
+        : log.phAdjType === 'up'
+        ? 'KOH'
+        : log.phAdjType === 'down'
+        ? 'Phosphoric'
+        : 'none';
+    setPhChemical(derivedChem);
+    setPhAdjMl(String(log.phAdjMl ?? 0));
+    setManualTemp(String(log.tempC));
+    setManualFlow(String(log.flowLpm));
+    setManualReservoir(String(log.reservoirPct));
+    setManualOperator(log.operator || '');
+    setManualNote(log.note || '');
+    formSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const startPpm = Math.max(0, Math.round(Number(ppmBefore) || currentWater.ppm));
@@ -383,9 +456,12 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
 
     const entryTimestamp = localDateTimeInputToIso(inspectionDateTime);
     const clampedHst = Math.min(75, Math.max(1, Math.round(Number(plantAgeHst) || 1)));
+    const existingLog = editingLogId
+      ? gh.waterLogs.find((l) => l.id === editingLogId)
+      : undefined;
 
     const entry: WaterLogEntry = {
-      id: `wlog-${Date.now()}`,
+      id: editingLogId || `wlog-${Date.now()}`,
       timestamp: entryTimestamp,
       plantAgeHst: clampedHst,
       ppmBefore: startPpm,
@@ -398,11 +474,11 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
       reservoirPct,
       waterAddedLiters: waterL,
       nutrientAddedLiters: nutrientL,
-      abMixAddedMl: nutrientL * 1000,
+      abMixAddedMl: Math.round(nutrientL * 1000),
       phAdjMl: phMl,
       phAdjType,
       phChemical,
-      source: 'manual',
+      source: existingLog?.source || 'manual',
       operator: manualOperator.trim() || 'Petugas',
       note:
         manualNote.trim() ||
@@ -410,21 +486,26 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     };
 
     onUpdateGh((prev) => {
-      const sortedLogs = [entry, ...prev.waterLogs].sort((a, b) =>
+      const wasNewest = editingLogId ? prev.waterLogs[0]?.id === editingLogId : false;
+      const nextLogs = editingLogId
+        ? prev.waterLogs.map((l) => (l.id === editingLogId ? entry : l))
+        : [entry, ...prev.waterLogs];
+      const sortedLogs = [...nextLogs].sort((a, b) =>
         String(b.timestamp).localeCompare(String(a.timestamp))
       );
-      const isNewest = sortedLogs[0]?.id === entry.id;
+      const newestLog = sortedLogs[0];
+      const shouldSyncCurrentWater = newestLog && (newestLog.id === entry.id || wasNewest);
       return {
         ...prev,
-        currentWater: isNewest
+        currentWater: shouldSyncCurrentWater
           ? {
               ...prev.currentWater,
-              ppm: endPpm,
-              ec,
-              ph: endPh,
-              tempC,
-              flowLpm,
-              reservoirPct,
+              ppm: newestLog.ppm,
+              ec: newestLog.ec,
+              ph: newestLog.ph,
+              tempC: newestLog.tempC,
+              flowLpm: newestLog.flowLpm,
+              reservoirPct: newestLog.reservoirPct,
             }
           : prev.currentWater,
         waterLogs: sortedLogs,
@@ -432,6 +513,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
     });
 
     // Keep PPM/pH initial & final and Petugas fields empty after saving
+    setEditingLogId(null);
     setPpmBefore('');
     setPpmAfter('');
     setPhBefore('');
@@ -446,6 +528,9 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
   };
 
   const handleDeleteLog = (id: string) => {
+    if (editingLogId === id) {
+      resetWaterForm();
+    }
     onUpdateGh((prev) => ({
       ...prev,
       waterLogs: prev.waterLogs.filter((l) => l.id !== id),
@@ -456,6 +541,9 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
   const handleDeleteSelectedLogs = () => {
     if (selectedLogIds.length === 0) return;
     const idSet = new Set(selectedLogIds);
+    if (editingLogId && idSet.has(editingLogId)) {
+      resetWaterForm();
+    }
     onUpdateGh((prev) => ({
       ...prev,
       waterLogs: prev.waterLogs.filter((l) => !idSet.has(l.id)),
@@ -464,6 +552,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
   };
 
   const handleDeleteAllLogs = () => {
+    resetWaterForm();
     onUpdateGh((prev) => ({
       ...prev,
       waterLogs: [],
@@ -1002,20 +1091,55 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
         {/* Left: Manual Additions (Air, Nutrisi 1-20L, KOH / Phosphoric, PPM/pH Awal-Akhir) */}
         <div className="space-y-6 xl:col-span-5">
           <section
+            ref={formSectionRef}
             className="rounded-xl border p-5"
             style={{
               backgroundColor: 'var(--app-surface)',
-              borderColor: 'var(--app-border)',
+              borderColor: editingLogId ? 'var(--app-accent)' : 'var(--app-border)',
             }}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between gap-2">
               <div>
-                <h3 className="text-sm font-semibold">Penambahan Air, Nutrisi & Pengatur pH Manual</h3>
+                <h3 className="text-sm font-semibold">
+                  {editingLogId
+                    ? 'Edit Hasil Pengukuran & Penambahan Air'
+                    : 'Penambahan Air, Nutrisi & Pengatur pH Manual'}
+                </h3>
                 <p className="mt-0.5 text-xs" style={{ color: 'var(--app-text-muted)' }}>
-                  Catat penambahan air, nutrisi (1–20 L), KOH / Phosphoric, serta kondisi awal & akhir.
+                  {editingLogId
+                    ? 'Perbarui data PPM, pH, air, nutrisi, suhu, petugas, atau waktu pemeriksaan.'
+                    : 'Catat penambahan air, nutrisi (1–20 L), KOH / Phosphoric, serta kondisi awal & akhir.'}
                 </p>
               </div>
+              {editingLogId && (
+                <button
+                  type="button"
+                  onClick={resetWaterForm}
+                  className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium cursor-pointer shrink-0"
+                  style={{
+                    borderColor: 'var(--app-border)',
+                    backgroundColor: 'var(--app-surface-muted)',
+                    color: 'var(--app-text)',
+                  }}
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Batal
+                </button>
+              )}
             </div>
+
+            {editingLogId && (
+              <div
+                className="mt-3 rounded-lg border px-3 py-2 text-xs font-medium"
+                style={{
+                  borderColor: 'var(--app-accent)',
+                  backgroundColor: 'var(--app-accent-soft)',
+                  color: 'var(--app-accent)',
+                }}
+              >
+                Mode Edit Aktif — ubah angka di bawah lalu klik Simpan Perubahan Log Air.
+              </div>
+            )}
 
             <form onSubmit={handleManualSubmit} className="mt-4 space-y-4">
               {/* Pemilihan Tanggal & Jam Pemeriksaan + Usia Tanaman (1-75 HST) */}
@@ -1574,17 +1698,35 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                 </div>
               </div>
 
-              <button
-                type="submit"
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90 cursor-pointer"
-                style={{
-                  backgroundColor: 'var(--app-accent)',
-                  color: 'var(--app-accent-fg)',
-                }}
-              >
-                <Plus className="h-4 w-4" />
-                Simpan Pengukuran & Penambahan Manual
-              </button>
+              <div className="flex gap-2">
+                {editingLogId && (
+                  <button
+                    type="button"
+                    onClick={resetWaterForm}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border px-4 py-2.5 text-sm font-medium cursor-pointer"
+                    style={{
+                      borderColor: 'var(--app-border)',
+                      backgroundColor: 'var(--app-surface-muted)',
+                      color: 'var(--app-text)',
+                    }}
+                  >
+                    Batal Edit
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90 cursor-pointer"
+                  style={{
+                    backgroundColor: 'var(--app-accent)',
+                    color: 'var(--app-accent-fg)',
+                  }}
+                >
+                  {editingLogId ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                  {editingLogId
+                    ? 'Simpan Perubahan Log Air'
+                    : 'Simpan Pengukuran & Penambahan Manual'}
+                </button>
+              </div>
             </form>
           </section>
 
@@ -1979,18 +2121,33 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                               </span>
                             )}
                           </label>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteLog(log.id)}
-                            className="inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium text-rose-600 cursor-pointer"
-                            style={{
-                              borderColor: 'var(--app-border)',
-                              backgroundColor: 'var(--app-surface)',
-                            }}
-                          >
-                            <Trash2 className="h-3 w-3" />
-                            Hapus
-                          </button>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => startEditingLog(log)}
+                              className="inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium cursor-pointer"
+                              style={{
+                                borderColor: editingLogId === log.id ? 'var(--app-accent)' : 'var(--app-border)',
+                                backgroundColor: editingLogId === log.id ? 'var(--app-accent-soft)' : 'var(--app-surface)',
+                                color: editingLogId === log.id ? 'var(--app-accent)' : 'var(--app-text)',
+                              }}
+                            >
+                              <Pencil className="h-3 w-3" />
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteLog(log.id)}
+                              className="inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium text-rose-600 cursor-pointer"
+                              style={{
+                                borderColor: 'var(--app-border)',
+                                backgroundColor: 'var(--app-surface)',
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              Hapus
+                            </button>
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-2 font-mono-tabular">
@@ -2019,16 +2176,16 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                               pH Awal → Akhir
                             </div>
                             <div className="font-semibold">
-                              {(log.phBefore ?? log.ph).toFixed(2)} → {log.ph.toFixed(2)}
+                              {Number(log.phBefore ?? log.ph ?? 0).toFixed(2)} → {Number(log.ph ?? 0).toFixed(2)}
                             </div>
                           </div>
                         </div>
 
-                        {(waterL > 0 || nutL > 0 || log.phAdjMl > 0) && (
+                        {(waterL > 0 || nutL > 0 || (log.phAdjMl ?? 0) > 0) && (
                           <div className="flex flex-wrap gap-x-3 gap-y-1 font-mono-tabular text-[11px]" style={{ color: 'var(--app-accent)' }}>
                             {waterL > 0 && <span>Air +{waterL} L</span>}
                             {nutL > 0 && <span>Nutrisi +{nutL} L</span>}
-                            {log.phAdjMl > 0 && (
+                            {(log.phAdjMl ?? 0) > 0 && (
                               <span>
                                 {chemLabel} +{log.phAdjMl} ml
                               </span>
@@ -2040,7 +2197,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                           <span className="font-medium" style={{ color: 'var(--app-text)' }}>
                             {log.note}
                           </span>{' '}
-                          · {log.operator} · {log.tempC.toFixed(1)}°C
+                          · {log.operator} · {Number(log.tempC ?? 0).toFixed(1)}°C
                         </div>
                       </div>
                     );
@@ -2075,7 +2232,7 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                         <th className="py-2.5 px-3 font-medium text-right">pH Awal → Akhir</th>
                         <th className="py-2.5 px-3 font-medium">Penambahan (Air / Nutrisi / pH)</th>
                         <th className="py-2.5 px-3 font-medium">Petugas & Catatan</th>
-                        <th className="py-2.5 pl-2 text-right font-medium">Hapus</th>
+                        <th className="py-2.5 pl-2 text-right font-medium">Aksi</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y" style={{ borderColor: 'var(--app-border)' }}>
@@ -2147,16 +2304,16 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono-tabular whitespace-nowrap">
                               <span style={{ color: 'var(--app-text-muted)' }}>
-                                {(log.phBefore ?? log.ph).toFixed(2)} →{' '}
+                                {Number(log.phBefore ?? log.ph ?? 0).toFixed(2)} →{' '}
                               </span>
-                              <span className="font-semibold">{log.ph.toFixed(2)}</span>
+                              <span className="font-semibold">{Number(log.ph ?? 0).toFixed(2)}</span>
                             </td>
                             <td className="py-2.5 px-3 whitespace-nowrap font-mono-tabular">
-                              {waterL > 0 || nutL > 0 || log.phAdjMl > 0 ? (
+                              {waterL > 0 || nutL > 0 || (log.phAdjMl ?? 0) > 0 ? (
                                 <div className="space-y-0.5">
                                   {waterL > 0 && <div>Air +{waterL} L</div>}
                                   {nutL > 0 && <div>Nutrisi +{nutL} L</div>}
-                                  {log.phAdjMl > 0 && (
+                                  {(log.phAdjMl ?? 0) > 0 && (
                                     <div>
                                       {chemLabel} +{log.phAdjMl} ml
                                     </div>
@@ -2169,20 +2326,36 @@ export const DashboardWaterControl: React.FC<DashboardWaterControlProps> = ({
                             <td className="py-2.5 px-3 max-w-[220px]">
                               <div className="font-medium truncate">{log.note}</div>
                               <div className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
-                                {log.operator} · {log.tempC.toFixed(1)}°C
+                                {log.operator} · {Number(log.tempC ?? 0).toFixed(1)}°C
                               </div>
                             </td>
-                            <td className="py-2.5 pl-2 text-right">
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteLog(log.id)}
-                                title="Hapus log ini"
-                                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium hover:text-rose-600 cursor-pointer"
-                                style={{ color: 'var(--app-text-muted)' }}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                <span>Hapus</span>
-                              </button>
+                            <td className="py-2.5 pl-2 text-right whitespace-nowrap">
+                              <div className="inline-flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => startEditingLog(log)}
+                                  title="Edit log pengukuran air ini"
+                                  className="inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium cursor-pointer"
+                                  style={{
+                                    borderColor: editingLogId === log.id ? 'var(--app-accent)' : 'var(--app-border)',
+                                    backgroundColor: editingLogId === log.id ? 'var(--app-accent-soft)' : 'transparent',
+                                    color: editingLogId === log.id ? 'var(--app-accent)' : 'var(--app-text)',
+                                  }}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  <span>Edit</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteLog(log.id)}
+                                  title="Hapus log ini"
+                                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium hover:text-rose-600 cursor-pointer"
+                                  style={{ color: 'var(--app-text-muted)' }}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <span>Hapus</span>
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );

@@ -2,6 +2,7 @@ import type { User } from 'firebase/auth';
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -15,7 +16,8 @@ import {
   writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { db, formatFirestoreError, handleFirestoreError, OperationType } from '../firebase';
+import { normalizeGreenhouse } from '../utils/storage';
 import type {
   ActivityCategory,
   ExpenseCategory,
@@ -122,9 +124,9 @@ function cleanTreatmentForCloud(ownerUid: string, t: TreatmentRecord) {
     ownerUid,
     type:
       t.type === 'pengolesan' || t.type === 'pengocoran' ? t.type : 'penyemprotan',
-    medicineName: String(t.medicineName || 'Perawatan').slice(0, 160),
-    activeIngredient: String(t.activeIngredient || '').slice(0, 160),
-    dosage: String(t.dosage || '').slice(0, 120),
+    medicineName: String(t.medicineName || '').trim().slice(0, 300) || 'Perawatan',
+    activeIngredient: String(t.activeIngredient || '').slice(0, 500),
+    dosage: String(t.dosage || '').slice(0, 240),
     targetPlants: String(t.targetPlants || '').slice(0, 160),
     scheduledAt: String(t.scheduledAt || new Date().toISOString()).slice(0, 64),
     status: t.status === 'selesai' ? 'selesai' : 'terjadwal',
@@ -163,13 +165,16 @@ function cleanExpenseForCloud(ownerUid: string, exp: ProductionExpenseEntry) {
     ownerUid,
     date: String(exp.date || new Date().toISOString().slice(0, 10)).slice(0, 32),
     category,
-    itemName: String(exp.itemName || 'Biaya Produksi').slice(0, 160),
+    itemName: String(exp.itemName || '').trim().slice(0, 160) || 'Biaya Produksi',
     quantity: Math.max(0, Number(exp.quantity) || 0),
     unit: String(exp.unit || 'Unit').slice(0, 40),
     unitPrice: Math.max(0, Number(exp.unitPrice) || 0),
     totalCost: Math.max(0, Number(exp.totalCost) || 0),
     notes: String(exp.notes || '').slice(0, 500),
   };
+  if (typeof exp.workHours === 'number' && !Number.isNaN(exp.workHours) && exp.workHours >= 0) {
+    payload.workHours = Math.min(10000, Number(exp.workHours.toFixed(2)));
+  }
   return { expenseId, payload };
 }
 
@@ -501,13 +506,29 @@ export async function uploadSeasonToCloud(
         nextWaterIds.add(logId);
         const ref = doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'waterLogs', logId);
         if (existingWaterIds.has(logId)) {
-          ops.push((b) =>
-            b.update(ref, {
-              note: payload.note,
-              operator: payload.operator,
-              updatedAt: serverTimestamp(),
-            })
-          );
+          const waterUpdateFields: Record<string, unknown> = {
+            timestamp: payload.timestamp,
+            ppm: payload.ppm,
+            ec: payload.ec,
+            ph: payload.ph,
+            tempC: payload.tempC,
+            flowLpm: payload.flowLpm,
+            reservoirPct: payload.reservoirPct,
+            abMixAddedMl: payload.abMixAddedMl,
+            phAdjMl: payload.phAdjMl,
+            phAdjType: payload.phAdjType,
+            source: payload.source,
+            operator: payload.operator,
+            note: payload.note,
+            plantAgeHst: 'plantAgeHst' in payload ? payload.plantAgeHst : deleteField(),
+            ppmBefore: 'ppmBefore' in payload ? payload.ppmBefore : deleteField(),
+            phBefore: 'phBefore' in payload ? payload.phBefore : deleteField(),
+            waterAddedLiters: 'waterAddedLiters' in payload ? payload.waterAddedLiters : deleteField(),
+            nutrientAddedLiters: 'nutrientAddedLiters' in payload ? payload.nutrientAddedLiters : deleteField(),
+            phChemical: 'phChemical' in payload ? payload.phChemical : deleteField(),
+            updatedAt: serverTimestamp(),
+          };
+          ops.push((b) => b.update(ref, waterUpdateFields));
         } else {
           ops.push((b) =>
             b.set(ref, {
@@ -541,10 +562,10 @@ export async function uploadSeasonToCloud(
             status: payload.status,
             operator: payload.operator,
             notes: payload.notes,
+            sprayCategory: 'sprayCategory' in payload ? payload.sprayCategory : deleteField(),
+            completedAt: 'completedAt' in payload ? payload.completedAt : deleteField(),
             updatedAt: serverTimestamp(),
           };
-          if ('sprayCategory' in payload) updateFields.sprayCategory = payload.sprayCategory;
-          if ('completedAt' in payload) updateFields.completedAt = payload.completedAt;
           ops.push((b) => b.update(ref, updateFields));
         } else {
           ops.push((b) =>
@@ -576,6 +597,7 @@ export async function uploadSeasonToCloud(
               itemName: payload.itemName,
               quantity: payload.quantity,
               unit: payload.unit,
+              workHours: 'workHours' in payload ? payload.workHours : deleteField(),
               unitPrice: payload.unitPrice,
               totalCost: payload.totalCost,
               notes: payload.notes,
@@ -977,6 +999,10 @@ export async function syncGreenhouseDeltaToCloud(params: {
 
     const deletedLogs = [...prevLogMap.keys()].filter((id) => !nextLogMap.has(id));
     const addedLogs = [...nextLogMap.entries()].filter(([id]) => !prevLogMap.has(id));
+    const updatedLogs = [...nextLogMap.entries()].filter(([id, l]) => {
+      const prev = prevLogMap.get(id);
+      return prev && JSON.stringify(prev) !== JSON.stringify(l);
+    });
 
     for (const logId of deletedLogs) {
       await deleteDoc(doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'waterLogs', logId));
@@ -989,12 +1015,47 @@ export async function syncGreenhouseDeltaToCloud(params: {
         updatedAt: serverTimestamp(),
       });
     }
+    for (const [logId, log] of updatedLogs) {
+      const { payload: logPayload } = cleanWaterLogForCloud(user.uid, log);
+      await updateDoc(
+        doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'waterLogs', logId),
+        {
+          timestamp: logPayload.timestamp,
+          ppm: logPayload.ppm,
+          ec: logPayload.ec,
+          ph: logPayload.ph,
+          tempC: logPayload.tempC,
+          flowLpm: logPayload.flowLpm,
+          reservoirPct: logPayload.reservoirPct,
+          abMixAddedMl: logPayload.abMixAddedMl,
+          phAdjMl: logPayload.phAdjMl,
+          phAdjType: logPayload.phAdjType,
+          source: logPayload.source,
+          operator: logPayload.operator,
+          note: logPayload.note,
+          plantAgeHst: 'plantAgeHst' in logPayload ? logPayload.plantAgeHst : deleteField(),
+          ppmBefore: 'ppmBefore' in logPayload ? logPayload.ppmBefore : deleteField(),
+          phBefore: 'phBefore' in logPayload ? logPayload.phBefore : deleteField(),
+          waterAddedLiters: 'waterAddedLiters' in logPayload ? logPayload.waterAddedLiters : deleteField(),
+          nutrientAddedLiters: 'nutrientAddedLiters' in logPayload ? logPayload.nutrientAddedLiters : deleteField(),
+          phChemical: 'phChemical' in logPayload ? logPayload.phChemical : deleteField(),
+          updatedAt: serverTimestamp(),
+        }
+      );
+    }
     if (addedLogs.length > 0) {
       const latest = addedLogs[0][1];
       const hstPart = latest.plantAgeHst ? `${latest.plantAgeHst} HST · ` : '';
       activitySummaries.push({
         cat: 'water',
         text: `Log air ${nextGh.name}: ${hstPart}PPM ${latest.ppm}, pH ${latest.ph}${latest.note ? ` (${latest.note.slice(0, 60)})` : ''}`,
+      });
+    } else if (updatedLogs.length > 0) {
+      const edited = updatedLogs[0][1];
+      const hstPart = edited.plantAgeHst ? `${edited.plantAgeHst} HST · ` : '';
+      activitySummaries.push({
+        cat: 'water',
+        text: `Edit log air ${nextGh.name}: ${hstPart}PPM ${edited.ppm}, pH ${edited.ph}`,
       });
     } else if (deletedLogs.length > 0) {
       activitySummaries.push({
@@ -1037,10 +1098,10 @@ export async function syncGreenhouseDeltaToCloud(params: {
         status: trPayload.status,
         operator: trPayload.operator,
         notes: trPayload.notes,
+        sprayCategory: 'sprayCategory' in trPayload ? trPayload.sprayCategory : deleteField(),
+        completedAt: 'completedAt' in trPayload ? trPayload.completedAt : deleteField(),
         updatedAt: serverTimestamp(),
       };
-      if ('sprayCategory' in trPayload) updateFields.sprayCategory = trPayload.sprayCategory;
-      if ('completedAt' in trPayload) updateFields.completedAt = trPayload.completedAt;
       await updateDoc(
         doc(db, 'users', user.uid, 'seasons', seasonId, 'greenhouses', ghId, 'treatments', trId),
         updateFields
@@ -1173,6 +1234,7 @@ export async function syncGreenhouseDeltaToCloud(params: {
         itemName: expPayload.itemName,
         quantity: expPayload.quantity,
         unit: expPayload.unit,
+        workHours: 'workHours' in expPayload ? expPayload.workHours : deleteField(),
         unitPrice: expPayload.unitPrice,
         totalCost: expPayload.totalCost,
         notes: expPayload.notes,
@@ -1290,7 +1352,8 @@ export interface CloudSeasonMeta {
 
 export function subscribeUserSeasons(
   uid: string,
-  onSeasons: (metas: CloudSeasonMeta[]) => void
+  onSeasons: (metas: CloudSeasonMeta[]) => void,
+  onError?: (msg: string) => void
 ): Unsubscribe {
   const path = `users/${uid}/seasons`;
   const q = query(collection(db, 'users', uid, 'seasons'), where('ownerUid', '==', uid));
@@ -1316,16 +1379,20 @@ export function subscribeUserSeasons(
       onSeasons(list);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      const msg = formatFirestoreError(error, OperationType.LIST, path);
+      onError?.(msg);
     }
   );
 }
+
+type ChildSubKey = 'w' | 't' | 'p' | 'e' | 's';
 
 export function subscribeSeasonRealtime(
   uid: string,
   seasonMeta: CloudSeasonMeta,
   onHydratedSeason: (season: SeasonDocument) => void,
-  onActivities: (activities: SupervisionActivity[]) => void
+  onActivities: (activities: SupervisionActivity[]) => void,
+  onError?: (msg: string) => void
 ): Unsubscribe {
   const seasonId = seasonMeta.id;
   const ghColPath = `users/${uid}/seasons/${seasonId}/greenhouses`;
@@ -1340,23 +1407,44 @@ export function subscribeSeasonRealtime(
   const expensesByGh = new Map<string, ProductionExpenseEntry[]>();
   const salesByGh = new Map<string, SaleRecord[]>();
   const subUnsubs = new Map<string, Unsubscribe[]>();
+  const loadedChildrenByGh = new Map<string, Set<ChildSubKey>>();
+  let ghListReady = false;
+
+  const markChildReady = (ghId: string, key: ChildSubKey) => {
+    let set = loadedChildrenByGh.get(ghId);
+    if (!set) {
+      set = new Set<ChildSubKey>();
+      loadedChildrenByGh.set(ghId, set);
+    }
+    set.add(key);
+  };
 
   const emit = () => {
-    if (ghBaseMap.size === 0) return;
+    if (!ghListReady || ghBaseMap.size === 0) return;
+    for (const ghId of ghBaseMap.keys()) {
+      const done = loadedChildrenByGh.get(ghId);
+      if (!done || done.size < 5) {
+        return;
+      }
+    }
+
     const orderedIds = [
       ...seasonMeta.greenhouseOrder.filter((id) => ghBaseMap.has(id)),
       ...[...ghBaseMap.keys()].filter((id) => !seasonMeta.greenhouseOrder.includes(id)),
     ];
-    const greenhouses: GreenhouseData[] = orderedIds.map((id) => {
+    const greenhouses: GreenhouseData[] = orderedIds.map((id, idx) => {
       const base = ghBaseMap.get(id)!;
-      return {
-        ...base,
-        waterLogs: waterLogsByGh.get(id) || [],
-        treatments: treatmentsByGh.get(id) || [],
-        plants: plantsByGh.get(id) || [],
-        expenses: expensesByGh.get(id) || [],
-        sales: salesByGh.get(id) || [],
-      };
+      return normalizeGreenhouse(
+        {
+          ...base,
+          waterLogs: waterLogsByGh.get(id) || [],
+          treatments: treatmentsByGh.get(id) || [],
+          plants: plantsByGh.get(id) || [],
+          expenses: expensesByGh.get(id) || [],
+          sales: salesByGh.get(id) || [],
+        },
+        idx
+      );
     });
 
     const activeGhId = greenhouses.some((g) => g.id === seasonMeta.activeGhId)
@@ -1386,11 +1474,15 @@ export function subscribeSeasonRealtime(
       (snap) => {
         const logs = snap.docs
           .map((d) => d.data() as WaterLogEntry)
-          .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+          .sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
         waterLogsByGh.set(ghId, logs);
+        markChildReady(ghId, 'w');
         emit();
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, wPath)
+      (err) => {
+        const msg = formatFirestoreError(err, OperationType.LIST, wPath);
+        onError?.(msg);
+      }
     );
 
     const tPath = `users/${uid}/seasons/${seasonId}/greenhouses/${ghId}/treatments`;
@@ -1402,11 +1494,15 @@ export function subscribeSeasonRealtime(
       (snap) => {
         const items = snap.docs
           .map((d) => d.data() as TreatmentRecord)
-          .sort((a, b) => String(b.scheduledAt).localeCompare(String(a.scheduledAt)));
+          .sort((a, b) => String(b.scheduledAt || '').localeCompare(String(a.scheduledAt || '')));
         treatmentsByGh.set(ghId, items);
+        markChildReady(ghId, 't');
         emit();
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, tPath)
+      (err) => {
+        const msg = formatFirestoreError(err, OperationType.LIST, tPath);
+        onError?.(msg);
+      }
     );
 
     const pPath = `users/${uid}/seasons/${seasonId}/greenhouses/${ghId}/plantBlocks`;
@@ -1428,9 +1524,13 @@ export function subscribeSeasonRealtime(
         }
         allPlants.sort((a, b) => a.id - b.id);
         plantsByGh.set(ghId, allPlants);
+        markChildReady(ghId, 'p');
         emit();
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, pPath)
+      (err) => {
+        const msg = formatFirestoreError(err, OperationType.LIST, pPath);
+        onError?.(msg);
+      }
     );
 
     const ePath = `users/${uid}/seasons/${seasonId}/greenhouses/${ghId}/expenses`;
@@ -1442,11 +1542,15 @@ export function subscribeSeasonRealtime(
       (snap) => {
         const items = snap.docs
           .map((d) => d.data() as ProductionExpenseEntry)
-          .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+          .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
         expensesByGh.set(ghId, items);
+        markChildReady(ghId, 'e');
         emit();
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, ePath)
+      (err) => {
+        const msg = formatFirestoreError(err, OperationType.LIST, ePath);
+        onError?.(msg);
+      }
     );
 
     const sPath = `users/${uid}/seasons/${seasonId}/greenhouses/${ghId}/sales`;
@@ -1458,11 +1562,15 @@ export function subscribeSeasonRealtime(
       (snap) => {
         const items = snap.docs
           .map((d) => d.data() as SaleRecord)
-          .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+          .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
         salesByGh.set(ghId, items);
+        markChildReady(ghId, 's');
         emit();
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, sPath)
+      (err) => {
+        const msg = formatFirestoreError(err, OperationType.LIST, sPath);
+        onError?.(msg);
+      }
     );
 
     subUnsubs.set(ghId, [u1, u2, u3, u4, u5]);
@@ -1516,14 +1624,19 @@ export function subscribeSeasonRealtime(
           plantsByGh.delete(oldId);
           expensesByGh.delete(oldId);
           salesByGh.delete(oldId);
+          loadedChildrenByGh.delete(oldId);
           const list = subUnsubs.get(oldId);
           list?.forEach((u) => u());
           subUnsubs.delete(oldId);
         }
       }
+      ghListReady = true;
       emit();
     },
-    (err) => handleFirestoreError(err, OperationType.LIST, ghColPath)
+    (err) => {
+      const msg = formatFirestoreError(err, OperationType.LIST, ghColPath);
+      onError?.(msg);
+    }
   );
 
   const actPath = `users/${uid}/seasons/${seasonId}/activities`;
@@ -1552,7 +1665,9 @@ export function subscribeSeasonRealtime(
         .slice(0, 40);
       onActivities(list);
     },
-    (err) => handleFirestoreError(err, OperationType.LIST, actPath)
+    (err) => {
+      formatFirestoreError(err, OperationType.LIST, actPath);
+    }
   );
 
   return () => {
@@ -1562,6 +1677,7 @@ export function subscribeSeasonRealtime(
       unsubs.forEach((u) => u());
     }
     subUnsubs.clear();
+    loadedChildrenByGh.clear();
   };
 }
 
@@ -1611,38 +1727,41 @@ export async function fetchSeasonFromCloud(
         .map((x) => x.data() as SaleRecord)
         .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
-      ghMap.set(ghId, {
-        id: ghId,
-        name: String(d.name || 'GH'),
-        variety: String(d.variety || ''),
-        capacity: Number(d.capacity) || 1000,
-        gulliesCount: Number(d.gulliesCount) || 20,
-        reservoirLiters: Number(d.reservoirLiters) || 2000,
-        plantingDate: String(d.plantingDate || ''),
-        harvestDate: String(d.harvestDate || ''),
-        phase: d.phase,
-        ecFactor: d.ecFactor === 700 ? 700 : 500,
-        avgMelonWeightKg:
-          typeof d.avgMelonWeightKg === 'number' && !Number.isNaN(d.avgMelonWeightKg)
-            ? d.avgMelonWeightKg
-            : undefined,
-        waterTargets:
-          d.waterTargets && typeof d.waterTargets === 'object'
-            ? {
-                useCustom: Boolean(d.waterTargets.useCustom),
-                ppmMin: Number(d.waterTargets.ppmMin) || 500,
-                ppmMax: Number(d.waterTargets.ppmMax) || 1000,
-                phMin: Number(d.waterTargets.phMin) || 6.5,
-                phMax: Number(d.waterTargets.phMax) || 7.0,
-              }
-            : undefined,
-        currentWater: d.currentWater,
-        waterLogs,
-        treatments,
-        plants,
-        expenses,
-        sales,
-      });
+      ghMap.set(
+        ghId,
+        normalizeGreenhouse({
+          id: ghId,
+          name: String(d.name || 'GH'),
+          variety: String(d.variety || ''),
+          capacity: Number(d.capacity) || 1000,
+          gulliesCount: Number(d.gulliesCount) || 20,
+          reservoirLiters: Number(d.reservoirLiters) || 2000,
+          plantingDate: String(d.plantingDate || ''),
+          harvestDate: String(d.harvestDate || ''),
+          phase: d.phase,
+          ecFactor: d.ecFactor === 700 ? 700 : 500,
+          avgMelonWeightKg:
+            typeof d.avgMelonWeightKg === 'number' && !Number.isNaN(d.avgMelonWeightKg)
+              ? d.avgMelonWeightKg
+              : undefined,
+          waterTargets:
+            d.waterTargets && typeof d.waterTargets === 'object'
+              ? {
+                  useCustom: Boolean(d.waterTargets.useCustom),
+                  ppmMin: Number(d.waterTargets.ppmMin) || 500,
+                  ppmMax: Number(d.waterTargets.ppmMax) || 1000,
+                  phMin: Number(d.waterTargets.phMin) || 6.5,
+                  phMax: Number(d.waterTargets.phMax) || 7.0,
+                }
+              : undefined,
+          currentWater: d.currentWater,
+          waterLogs,
+          treatments,
+          plants,
+          expenses,
+          sales,
+        })
+      );
     }
 
     const orderedIds = [
@@ -1709,7 +1828,8 @@ export async function savePaymentProfileToCloud(
 
 export function subscribePaymentProfileRealtime(
   uid: string,
-  onProfile: (profile: SelfSalePaymentProfile | null) => void
+  onProfile: (profile: SelfSalePaymentProfile | null) => void,
+  onError?: (msg: string) => void
 ): Unsubscribe {
   const path = `users/${uid}/paymentProfile`;
   const q = query(collection(db, 'users', uid, 'paymentProfile'), where('ownerUid', '==', uid));
@@ -1735,7 +1855,8 @@ export function subscribePaymentProfileRealtime(
       });
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      const msg = formatFirestoreError(error, OperationType.LIST, path);
+      onError?.(msg);
     }
   );
 }

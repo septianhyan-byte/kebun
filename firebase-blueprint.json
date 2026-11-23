@@ -316,15 +316,15 @@
         "medicineName": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 160
+          "maxLength": 300
         },
         "activeIngredient": {
           "type": "string",
-          "maxLength": 160
+          "maxLength": 500
         },
         "dosage": {
           "type": "string",
-          "maxLength": 120
+          "maxLength": 240
         },
         "targetPlants": {
           "type": "string",
@@ -523,6 +523,7 @@
         },
         "quantity": { "type": "number" },
         "unit": { "type": "string", "maxLength": 40 },
+        "workHours": { "type": "number" },
         "unitPrice": { "type": "number" },
         "totalCost": { "type": "number" },
         "notes": { "type": "string", "maxLength": 500 },

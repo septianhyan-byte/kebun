@@ -191,6 +191,14 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     }
   }, [gh.plants.length, selectedId]);
 
+  useEffect(() => {
+    return () => {
+      if (pulseTimerRef.current !== null) {
+        window.clearTimeout(pulseTimerRef.current);
+      }
+    };
+  }, []);
+
   const counts = useMemo(() => {
     const res = {
       total: gh.plants.length,
@@ -205,10 +213,11 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       jelek: 0,
     };
     for (const p of gh.plants) {
-      res[p.status] += 1;
+      const safeStatus = PLANT_STATUS_META[p.status] ? p.status : 'sehat';
+      res[safeStatus] += 1;
       const fruiting = getFruiting(p);
       res[fruiting] += 1;
-      if (p.status !== 'kosong' && fruiting === 'berbuah') {
+      if (safeStatus !== 'kosong' && fruiting === 'berbuah') {
         res[getFruitQuality(p)] += 1;
       }
     }
@@ -228,22 +237,31 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
     let badFruits = 0;
     let goodSampledCount = 0;
     let badSampledCount = 0;
+    let goodSampledFruitCount = 0;
+    let badSampledFruitCount = 0;
     let goodSampleWeightKg = 0;
     let badSampleWeightKg = 0;
 
     for (const p of gh.plants) {
       if (p.status === 'kosong') continue;
-      if (p.estWeightKg > 0) {
-        sampledCount += 1;
-        totalSampleWeightKg += p.estWeightKg;
-        const weights = getFruitWeights(p);
-        const positiveWeights = weights.filter((w) => w > 0);
-        if (Array.isArray(p.fruitWeights) && p.fruitWeights.length > 0 && positiveWeights.length > 0) {
-          sampledFruitCount += positiveWeights.length;
-        } else {
-          sampledFruitCount += Math.max(1, p.fruitCount || 1);
-        }
+      const weights = getFruitWeights(p);
+      const positiveWeights = weights.filter((w) => w > 0);
+      let plantWeighedKg = 0;
+      let plantWeighedFruits = 0;
+      if (Array.isArray(p.fruitWeights) && p.fruitWeights.length > 0 && positiveWeights.length > 0) {
+        plantWeighedKg = positiveWeights.reduce((a, b) => a + b, 0);
+        plantWeighedFruits = positiveWeights.length;
+      } else if (p.estWeightKg > 0) {
+        plantWeighedKg = p.estWeightKg;
+        plantWeighedFruits = Math.max(1, p.fruitCount || 1);
       }
+
+      if (plantWeighedFruits > 0 && plantWeighedKg > 0) {
+        sampledCount += 1;
+        sampledFruitCount += plantWeighedFruits;
+        totalSampleWeightKg += plantWeighedKg;
+      }
+
       if (getFruiting(p) === 'berbuah') {
         fruitingActiveCount += 1;
         const fruitQty = Math.max(1, p.fruitCount || 0);
@@ -252,41 +270,59 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
         if (getFruitQuality(p) === 'jelek') {
           badPlantCount += 1;
           badFruits += fruitQty;
-          if (p.estWeightKg > 0) {
+          if (plantWeighedFruits > 0 && plantWeighedKg > 0) {
             badSampledCount += 1;
-            badSampleWeightKg += p.estWeightKg;
+            badSampledFruitCount += plantWeighedFruits;
+            badSampleWeightKg += plantWeighedKg;
           }
         } else {
           goodPlantCount += 1;
           goodFruits += fruitQty;
-          if (p.estWeightKg > 0) {
+          if (plantWeighedFruits > 0 && plantWeighedKg > 0) {
             goodSampledCount += 1;
-            goodSampleWeightKg += p.estWeightKg;
+            goodSampledFruitCount += plantWeighedFruits;
+            goodSampleWeightKg += plantWeighedKg;
           }
         }
       }
     }
 
-    const sampleAvgKg = sampledFruitCount > 0 ? totalSampleWeightKg / sampledFruitCount : 0;
-    const effectiveAvgKg =
-      typeof gh.avgMelonWeightKg === 'number' && !Number.isNaN(gh.avgMelonWeightKg)
-        ? gh.avgMelonWeightKg
-        : sampleAvgKg > 0
-        ? Number(sampleAvgKg.toFixed(2))
-        : 1.5;
+    const hasWeighedFruits = sampledFruitCount > 0;
+    const sampleAvgKg = hasWeighedFruits ? totalSampleWeightKg / sampledFruitCount : 0;
+    const goodSampleAvgKg =
+      goodSampledFruitCount > 0 ? goodSampleWeightKg / goodSampledFruitCount : 0;
+    const badSampleAvgKg =
+      badSampledFruitCount > 0 ? badSampleWeightKg / badSampledFruitCount : 0;
 
-    const estimatedTotalKg = totalFruits * effectiveAvgKg;
-    const goodEstimatedKg = goodFruits * effectiveAvgKg;
-    const badEstimatedKg = badFruits * effectiveAvgKg;
+    const effectiveAvgKg = hasWeighedFruits
+      ? Number(sampleAvgKg.toFixed(2))
+      : typeof gh.avgMelonWeightKg === 'number' && !Number.isNaN(gh.avgMelonWeightKg)
+      ? gh.avgMelonWeightKg
+      : 0;
+
+    const goodEffectiveAvgKg =
+      goodSampledFruitCount > 0 ? Number(goodSampleAvgKg.toFixed(2)) : effectiveAvgKg;
+    const badEffectiveAvgKg =
+      badSampledFruitCount > 0 ? Number(badSampleAvgKg.toFixed(2)) : effectiveAvgKg;
+
+    const goodEstimatedKg = goodFruits * goodEffectiveAvgKg;
+    const badEstimatedKg = badFruits * badEffectiveAvgKg;
+    const estimatedTotalKg = totalFruits > 0 ? goodEstimatedKg + badEstimatedKg : 0;
+
     return {
+      hasWeighedFruits,
       sampledCount,
       sampledFruitCount,
       totalSampleWeightKg,
       sampleAvgKg,
+      goodSampleAvgKg,
+      badSampleAvgKg,
       fruitingActiveCount,
       twoFruitCount,
       totalFruits,
       effectiveAvgKg,
+      goodEffectiveAvgKg,
+      badEffectiveAvgKg,
       estimatedTotalKg,
       goodPlantCount,
       badPlantCount,
@@ -294,6 +330,8 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       badFruits,
       goodSampledCount,
       badSampledCount,
+      goodSampledFruitCount,
+      badSampledFruitCount,
       goodSampleWeightKg,
       badSampleWeightKg,
       goodEstimatedKg,
@@ -733,7 +771,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
       }
       return FRUIT_QUALITY_META[getFruitQuality(plant)].cellBg;
     }
-    return PLANT_STATUS_META[plant.status].cellBg;
+    return (PLANT_STATUS_META[plant.status] || PLANT_STATUS_META.sehat).cellBg;
   };
 
   const getPlantConditionDot = (
@@ -741,7 +779,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
   ): { color: string; title: string } | null => {
     const fruiting = getFruiting(plant);
     const quality = getFruitQuality(plant);
-    const healthMeta = PLANT_STATUS_META[plant.status];
+    const healthMeta = PLANT_STATUS_META[plant.status] || PLANT_STATUS_META.sehat;
 
     if (colorMode === 'health') {
       if (plant.status === 'kosong') return null;
@@ -889,6 +927,12 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
               qKey === 'bagus' ? weightMetrics.goodEstimatedKg : weightMetrics.badEstimatedKg;
             const fruitQty =
               qKey === 'bagus' ? weightMetrics.goodFruits : weightMetrics.badFruits;
+            const weighedAvg =
+              qKey === 'bagus' ? weightMetrics.goodSampleAvgKg : weightMetrics.badSampleAvgKg;
+            const weighedFruits =
+              qKey === 'bagus'
+                ? weightMetrics.goodSampledFruitCount
+                : weightMetrics.badSampledFruitCount;
             const pctFruiting =
               weightMetrics.fruitingActiveCount > 0
                 ? ((counts[qKey] / weightMetrics.fruitingActiveCount) * 100).toFixed(1)
@@ -925,6 +969,11 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                     </div>
                     <div className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
                       {counts[qKey].toLocaleString('id-ID')} phn ({pctFruiting}%) · {fruitQty.toLocaleString('id-ID')} buah
+                    </div>
+                    <div className="text-[10px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                      {weighedFruits > 0
+                        ? `Rata2 ditimbang: ${weighedAvg.toFixed(2)} kg/buah (${weighedFruits} buah)`
+                        : 'Rata2 ditimbang: Belum ditimbang'}
                     </div>
                   </div>
                 </div>
@@ -971,79 +1020,77 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
             </div>
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:flex lg:flex-wrap lg:items-center lg:gap-4">
-              {/* Editable Average Weight Input */}
-              <div className="col-span-2 sm:col-span-1">
-                <label
-                  htmlFor="avg-melon-weight-input"
-                  className="block text-[11px] font-medium mb-1"
-                  style={{ color: 'var(--app-text-muted)' }}
-                >
-                  Rata-Rata / Buah (kg)
-                </label>
-                <div className="flex items-center gap-1.5">
-                  <input
-                    ref={avgWeightInputRef}
-                    id="avg-melon-weight-input"
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0"
-                    value={avgWeightInput}
-                    onFocus={() => {
-                      if (avgWeightInput === '0') setAvgWeightInput('');
-                    }}
-                    onBlur={() => {
-                      if (avgWeightInput.trim() === '' || avgWeightInput === '.') {
-                        setAvgWeightInput(String(gh.avgMelonWeightKg ?? 0));
-                      } else {
-                        const parsed = Number(avgWeightInput);
-                        if (!Number.isNaN(parsed)) {
-                          setAvgWeightInput(String(Math.min(50, Math.max(0, Number(parsed.toFixed(2))))));
-                        }
-                      }
-                    }}
-                    onChange={(e) => {
-                      const raw = sanitizeDecimalDraft(e.target.value);
-                      setAvgWeightInput(raw);
-                      if (raw.trim() === '' || raw === '.') {
-                        lastAvgExtRef.current = 0;
-                        onUpdateGh((prev) => ({ ...prev, avgMelonWeightKg: 0 }));
-                        return;
-                      }
-                      const num = Number(raw);
-                      if (!Number.isNaN(num)) {
-                        const clamped = Math.min(50, Math.max(0, Number(num.toFixed(2))));
-                        lastAvgExtRef.current = clamped;
-                        onUpdateGh((prev) => ({ ...prev, avgMelonWeightKg: clamped }));
-                      }
-                    }}
-                    className="h-9 w-24 rounded-lg border px-2.5 text-sm font-bold font-mono-tabular focus:outline-none"
-                    style={{
-                      borderColor: 'var(--app-border)',
-                      backgroundColor: 'var(--app-canvas)',
-                      color: 'var(--app-text)',
-                    }}
-                  />
-                  {weightMetrics.sampleAvgKg > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const rounded = Number(weightMetrics.sampleAvgKg.toFixed(2));
-                        lastAvgExtRef.current = rounded;
-                        setAvgWeightInput(String(rounded));
-                        onUpdateGh((prev) => ({ ...prev, avgMelonWeightKg: rounded }));
+              {/* Average Weight from Weighed Fruits (or manual fallback if 0 weighed) */}
+              <div
+                className="col-span-2 sm:col-span-1 rounded-lg border px-3 py-2"
+                style={{
+                  borderColor: 'var(--app-border)',
+                  backgroundColor: 'var(--app-canvas)',
+                }}
+              >
+                <div className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
+                  Rata-Rata / Buah (Ditimbang)
+                </div>
+                {weightMetrics.hasWeighedFruits ? (
+                  <>
+                    <div className="text-sm sm:text-base font-bold font-mono-tabular">
+                      {weightMetrics.sampleAvgKg.toFixed(2)} kg
+                    </div>
+                    <div className="text-[10px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                      Dari {weightMetrics.sampledFruitCount.toLocaleString('id-ID')} buah ditimbang
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <input
+                      ref={avgWeightInputRef}
+                      id="avg-melon-weight-input"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={avgWeightInput}
+                      onFocus={() => {
+                        if (avgWeightInput === '0') setAvgWeightInput('');
                       }}
-                      title={`Gunakan rata-rata dari ${weightMetrics.sampledFruitCount} sampel buah (${weightMetrics.sampleAvgKg.toFixed(2)} kg/buah)`}
-                      className="h-9 rounded-lg border px-2.5 text-[11px] font-semibold whitespace-nowrap cursor-pointer"
+                      onBlur={() => {
+                        if (avgWeightInput.trim() === '' || avgWeightInput === '.') {
+                          setAvgWeightInput(String(gh.avgMelonWeightKg ?? 0));
+                        } else {
+                          const parsed = Number(avgWeightInput);
+                          if (!Number.isNaN(parsed)) {
+                            setAvgWeightInput(
+                              String(Math.min(50, Math.max(0, Number(parsed.toFixed(2)))))
+                            );
+                          }
+                        }
+                      }}
+                      onChange={(e) => {
+                        const raw = sanitizeDecimalDraft(e.target.value);
+                        setAvgWeightInput(raw);
+                        if (raw.trim() === '' || raw === '.') {
+                          lastAvgExtRef.current = 0;
+                          onUpdateGh((prev) => ({ ...prev, avgMelonWeightKg: 0 }));
+                          return;
+                        }
+                        const num = Number(raw);
+                        if (!Number.isNaN(num)) {
+                          const clamped = Math.min(50, Math.max(0, Number(num.toFixed(2))));
+                          lastAvgExtRef.current = clamped;
+                          onUpdateGh((prev) => ({ ...prev, avgMelonWeightKg: clamped }));
+                        }
+                      }}
+                      className="h-8 w-20 rounded-md border px-2 text-xs font-bold font-mono-tabular focus:outline-none"
                       style={{
                         borderColor: 'var(--app-border)',
-                        backgroundColor: 'var(--app-surface-muted)',
-                        color: 'var(--app-accent)',
+                        backgroundColor: 'var(--app-surface)',
+                        color: 'var(--app-text)',
                       }}
-                    >
-                      Sampel ({weightMetrics.sampleAvgKg.toFixed(2)} kg)
-                    </button>
-                  )}
-                </div>
+                    />
+                    <span className="text-[10px]" style={{ color: 'var(--app-text-muted)' }}>
+                      kg (estimasi awal)
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Buah Aktif */}
@@ -1077,16 +1124,17 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                 }}
               >
                 <div className="text-[11px]" style={{ color: 'var(--app-text-muted)' }}>
-                  Total Sampel Input
+                  Total Buah Ditimbang
                 </div>
                 <div className="text-sm font-bold font-mono-tabular">
                   {weightMetrics.totalSampleWeightKg.toLocaleString('id-ID', {
-                    maximumFractionDigits: 1,
+                    maximumFractionDigits: 2,
                   })}{' '}
                   kg
                 </div>
                 <div className="text-[10px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
-                  {weightMetrics.sampledCount.toLocaleString('id-ID')} pohon terisi bobot
+                  {weightMetrics.sampledFruitCount.toLocaleString('id-ID')} buah ·{' '}
+                  {weightMetrics.sampledCount.toLocaleString('id-ID')} pohon
                 </div>
               </div>
 
@@ -1122,13 +1170,13 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
             </div>
           </div>
 
-          {/* Rincian Berat Buah Bagus vs Jelek */}
+          {/* Rincian Rata-Rata & Total Berat Buah Bagus vs Buah Jelek (Tersendiri) */}
           <div
             className="mt-3 grid grid-cols-1 gap-2.5 border-t pt-3 sm:grid-cols-2"
             style={{ borderColor: 'var(--app-border)' }}
           >
             <div
-              className="flex items-center justify-between rounded-lg border px-3.5 py-2.5"
+              className="flex items-center justify-between gap-3 rounded-lg border px-3.5 py-2.5"
               style={{
                 borderColor: FRUIT_QUALITY_META.bagus.cellBg,
                 backgroundColor: 'var(--app-canvas)',
@@ -1136,27 +1184,35 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
             >
               <div className="flex items-center gap-2.5">
                 <span
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-white shrink-0"
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-white shrink-0"
                   style={{ backgroundColor: FRUIT_QUALITY_META.bagus.cellBg }}
                 >
-                  <ThumbsUp className="h-3.5 w-3.5" />
+                  <ThumbsUp className="h-4 w-4" />
                 </span>
                 <div>
                   <div className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-                    Total Buah Bagus
+                    Buah Bagus
                   </div>
-                  <div className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
-                    {weightMetrics.goodPlantCount.toLocaleString('id-ID')} pohon ·{' '}
-                    {weightMetrics.goodFruits.toLocaleString('id-ID')} buah
-                    {weightMetrics.goodSampleWeightKg > 0
-                      ? ` · input bobot ${weightMetrics.goodSampleWeightKg.toLocaleString('id-ID', {
-                          maximumFractionDigits: 1,
-                        })} kg`
-                      : ''}
+                  <div className="text-xs font-bold font-mono-tabular text-emerald-700 dark:text-emerald-300">
+                    Rata-rata:{' '}
+                    {weightMetrics.goodSampledFruitCount > 0
+                      ? `${weightMetrics.goodSampleAvgKg.toFixed(2)} kg/buah`
+                      : 'Belum ditimbang'}
+                  </div>
+                  <div className="text-[10px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                    {weightMetrics.goodSampledFruitCount.toLocaleString('id-ID')} buah ditimbang (
+                    {weightMetrics.goodSampleWeightKg.toLocaleString('id-ID', {
+                      maximumFractionDigits: 2,
+                    })}{' '}
+                    kg) · {weightMetrics.goodPlantCount.toLocaleString('id-ID')} phn (
+                    {weightMetrics.goodFruits.toLocaleString('id-ID')} buah)
                   </div>
                 </div>
               </div>
-              <div className="text-right font-mono-tabular">
+              <div className="text-right font-mono-tabular shrink-0">
+                <div className="text-[10px]" style={{ color: 'var(--app-text-muted)' }}>
+                  Estimasi Total
+                </div>
                 <div className="text-base font-bold text-emerald-700 dark:text-emerald-400">
                   {weightMetrics.goodEstimatedKg.toLocaleString('id-ID', {
                     maximumFractionDigits: 1,
@@ -1172,7 +1228,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
             </div>
 
             <div
-              className="flex items-center justify-between rounded-lg border px-3.5 py-2.5"
+              className="flex items-center justify-between gap-3 rounded-lg border px-3.5 py-2.5"
               style={{
                 borderColor: FRUIT_QUALITY_META.jelek.cellBg,
                 backgroundColor: 'var(--app-canvas)',
@@ -1180,27 +1236,35 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
             >
               <div className="flex items-center gap-2.5">
                 <span
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-white shrink-0"
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-white shrink-0"
                   style={{ backgroundColor: FRUIT_QUALITY_META.jelek.cellBg }}
                 >
-                  <ThumbsDown className="h-3.5 w-3.5" />
+                  <ThumbsDown className="h-4 w-4" />
                 </span>
                 <div>
                   <div className="text-xs font-semibold text-rose-700 dark:text-rose-400">
-                    Total Buah Jelek
+                    Buah Jelek
                   </div>
-                  <div className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
-                    {weightMetrics.badPlantCount.toLocaleString('id-ID')} pohon ·{' '}
-                    {weightMetrics.badFruits.toLocaleString('id-ID')} buah
-                    {weightMetrics.badSampleWeightKg > 0
-                      ? ` · input bobot ${weightMetrics.badSampleWeightKg.toLocaleString('id-ID', {
-                          maximumFractionDigits: 1,
-                        })} kg`
-                      : ''}
+                  <div className="text-xs font-bold font-mono-tabular text-rose-700 dark:text-rose-300">
+                    Rata-rata:{' '}
+                    {weightMetrics.badSampledFruitCount > 0
+                      ? `${weightMetrics.badSampleAvgKg.toFixed(2)} kg/buah`
+                      : 'Belum ditimbang'}
+                  </div>
+                  <div className="text-[10px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
+                    {weightMetrics.badSampledFruitCount.toLocaleString('id-ID')} buah ditimbang (
+                    {weightMetrics.badSampleWeightKg.toLocaleString('id-ID', {
+                      maximumFractionDigits: 2,
+                    })}{' '}
+                    kg) · {weightMetrics.badPlantCount.toLocaleString('id-ID')} phn (
+                    {weightMetrics.badFruits.toLocaleString('id-ID')} buah)
                   </div>
                 </div>
               </div>
-              <div className="text-right font-mono-tabular">
+              <div className="text-right font-mono-tabular shrink-0">
+                <div className="text-[10px]" style={{ color: 'var(--app-text-muted)' }}>
+                  Estimasi Total
+                </div>
                 <div className="text-base font-bold text-rose-700 dark:text-rose-400">
                   {weightMetrics.badEstimatedKg.toLocaleString('id-ID', {
                     maximumFractionDigits: 1,
@@ -2294,7 +2358,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
             <div className="font-mono-tabular text-xs min-h-[18px]">
               {hoveredPlant ? (
                 <span>
-                  <strong>#{hoveredPlant.id}</strong> · {PLANT_STATUS_META[hoveredPlant.status].short} ·{' '}
+                  <strong>#{hoveredPlant.id}</strong> · {(PLANT_STATUS_META[hoveredPlant.status] || PLANT_STATUS_META.sehat).short} ·{' '}
                   {getFruiting(hoveredPlant) === 'berbuah'
                     ? `Berbuah (${FRUIT_QUALITY_META[getFruitQuality(hoveredPlant)].short})`
                     : FRUITING_STATUS_META.tidak_berbuah.short}{' '}
@@ -2321,7 +2385,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
           ) : viewMode === 'block' ? (
             <div className="mt-4 grid grid-cols-5 gap-1.5 sm:grid-cols-10">
               {visiblePlants.map((plant) => {
-                const meta = PLANT_STATUS_META[plant.status];
+                const meta = PLANT_STATUS_META[plant.status] || PLANT_STATUS_META.sehat;
                 const fruiting = getFruiting(plant);
                 const isSelected = plant.id === selectedId;
                 const isMultiChecked = selectedPlantIds.includes(plant.id);
@@ -2379,7 +2443,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
               }}
             >
               {visiblePlants.map((plant) => {
-                const meta = PLANT_STATUS_META[plant.status];
+                const meta = PLANT_STATUS_META[plant.status] || PLANT_STATUS_META.sehat;
                 const fruiting = getFruiting(plant);
                 const isSelected = plant.id === selectedId;
                 const isMultiChecked = selectedPlantIds.includes(plant.id);
@@ -2432,10 +2496,10 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
               <span className="inline-flex items-center gap-1.5 font-mono-tabular font-semibold truncate">
                 <span
                   className="inline-block h-2.5 w-2.5 rounded-full shrink-0 border border-white/80"
-                  style={{ backgroundColor: PLANT_STATUS_META[selectedPlant.status].cellBg }}
+                  style={{ backgroundColor: (PLANT_STATUS_META[selectedPlant.status] || PLANT_STATUS_META.sehat).cellBg }}
                 />
                 <span className="truncate">
-                  Dipilih: #{selectedPlant.id} · {PLANT_STATUS_META[selectedPlant.status].short} ·{' '}
+                  Dipilih: #{selectedPlant.id} · {(PLANT_STATUS_META[selectedPlant.status] || PLANT_STATUS_META.sehat).short} ·{' '}
                   {getFruiting(selectedPlant) === 'berbuah'
                     ? `Berbuah (${FRUIT_QUALITY_META[getFruitQuality(selectedPlant)].short})`
                     : FRUITING_STATUS_META.tidak_berbuah.short}
@@ -2481,18 +2545,18 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                   <div className="flex flex-wrap items-center gap-2 mt-0.5">
                     <span
                       className="inline-block h-3 w-3 rounded-full shrink-0 border border-white/80 shadow-xs"
-                      style={{ backgroundColor: PLANT_STATUS_META[selectedPlant.status].cellBg }}
-                      title={`Kondisi Tanaman: ${PLANT_STATUS_META[selectedPlant.status].label}`}
+                      style={{ backgroundColor: (PLANT_STATUS_META[selectedPlant.status] || PLANT_STATUS_META.sehat).cellBg }}
+                      title={`Kondisi Tanaman: ${(PLANT_STATUS_META[selectedPlant.status] || PLANT_STATUS_META.sehat).label}`}
                     />
                     <h3 className="text-lg font-bold font-mono-tabular">
                       Tanaman #{selectedPlant.id}
                     </h3>
                     <span
                       className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                        PLANT_STATUS_META[selectedPlant.status].textBadge
+                        (PLANT_STATUS_META[selectedPlant.status] || PLANT_STATUS_META.sehat).textBadge
                       }`}
                     >
-                      {PLANT_STATUS_META[selectedPlant.status].short}
+                      {(PLANT_STATUS_META[selectedPlant.status] || PLANT_STATUS_META.sehat).short}
                     </span>
                   </div>
                 </div>
@@ -2827,19 +2891,7 @@ export const DashboardPlantsMatrix: React.FC<DashboardPlantsMatrixProps> = ({
                         const raw = sanitizeIntDraft(e.target.value);
                         setFruitCountInput(raw);
                         if (raw.trim() === '') {
-                          if (lastExternalNumRef.current) {
-                            lastExternalNumRef.current.fruitCount = 0;
-                            lastExternalNumRef.current.estWeightKg = 0;
-                            lastExternalNumRef.current.fruitWeightsSig = '';
-                          }
-                          setFruitWeightInputs([]);
-                          setWeightInput('0');
-                          updateSinglePlant(selectedPlant.id, {
-                            fruitCount: 0,
-                            fruitingStatus: 'tidak_berbuah',
-                            fruitWeights: [],
-                            estWeightKg: 0,
-                          });
+                          // Allow clearing while typing a new number without wiping fruitWeights/estWeightKg prematurely
                           return;
                         }
                         const num = parseInt(raw, 10);

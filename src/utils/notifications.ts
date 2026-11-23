@@ -50,35 +50,51 @@ export function evaluateGreenhouseAlerts(
   const alerts: AppAlert[] = [];
   const now = new Date().toISOString();
 
+  const currentWater = gh.currentWater || {
+    ppm: 0,
+    ec: 0,
+    ph: 0,
+    tempC: 0,
+    flowLpm: 0,
+    reservoirPct: 0,
+    pumpCirculation: false,
+    pumpNutrientA: false,
+    pumpNutrientB: false,
+    pumpPhDown: false,
+    pumpPhUp: false,
+  };
+  const currentPpm = Number(currentWater.ppm) || 0;
+  const currentPh = Number(currentWater.ph) || 0;
+
   const useCustom = Boolean(gh.waterTargets?.useCustom);
-  const ppmMin = useCustom ? gh.waterTargets!.ppmMin : notif.ppmMin;
-  const ppmMax = useCustom ? gh.waterTargets!.ppmMax : notif.ppmMax;
-  const phMin = useCustom ? gh.waterTargets!.phMin : notif.phMin;
-  const phMax = useCustom ? gh.waterTargets!.phMax : notif.phMax;
+  const ppmMin = useCustom ? Number(gh.waterTargets?.ppmMin ?? notif.ppmMin) || notif.ppmMin : notif.ppmMin;
+  const ppmMax = useCustom ? Number(gh.waterTargets?.ppmMax ?? notif.ppmMax) || notif.ppmMax : notif.ppmMax;
+  const phMin = useCustom ? Number(gh.waterTargets?.phMin ?? notif.phMin) || notif.phMin : notif.phMin;
+  const phMax = useCustom ? Number(gh.waterTargets?.phMax ?? notif.phMax) || notif.phMax : notif.phMax;
   const targetLabel = useCustom ? 'Target pemeriksa' : 'Target notifikasi';
 
-  if (gh.currentWater.ppm < ppmMin || gh.currentWater.ppm > ppmMax) {
+  if (currentPpm < ppmMin || currentPpm > ppmMax) {
     alerts.push({
       id: `alert-ppm-${gh.id}`,
       level: 'critical',
-      title: `${gh.name}: PPM di Luar Batas (${gh.currentWater.ppm} ppm)`,
+      title: `${gh.name}: PPM di Luar Batas (${currentPpm} ppm)`,
       message: `${targetLabel}: ${ppmMin}–${ppmMax} ppm. Sesuaikan dosing Nutrisi AB atau air baku.`,
       timestamp: now,
     });
   }
 
-  if (gh.currentWater.ph < phMin || gh.currentWater.ph > phMax) {
+  if (currentPh < phMin || currentPh > phMax) {
     alerts.push({
       id: `alert-ph-${gh.id}`,
       level: 'critical',
-      title: `${gh.name}: pH Air di Luar Batas (${gh.currentWater.ph.toFixed(2)})`,
+      title: `${gh.name}: pH Air di Luar Batas (${currentPh.toFixed(2)})`,
       message: `${targetLabel}: pH ${phMin.toFixed(1)}–${phMax.toFixed(1)}. Lakukan dosing pH Up/Down.`,
       timestamp: now,
     });
   }
 
   if (notif.treatmentReminder) {
-    const dueCount = gh.treatments.filter((t) => t.status === 'terjadwal').length;
+    const dueCount = (gh.treatments || []).filter((t) => t.status === 'terjadwal').length;
     if (dueCount > 0) {
       alerts.push({
         id: `alert-tr-${gh.id}`,

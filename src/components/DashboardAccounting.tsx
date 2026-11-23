@@ -332,6 +332,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
   const [expManualName, setExpManualName] = useState('');
   const [expQtyDraft, setExpQtyDraft] = useState('1');
   const [expUnit, setExpUnit] = useState(EXPENSE_PRESET_OPTIONS.pupuk[0].defaultUnit);
+  const [expWorkHoursDraft, setExpWorkHoursDraft] = useState('');
   const [expUnitPriceDraft, setExpUnitPriceDraft] = useState('');
   const [expTotalDraft, setExpTotalDraft] = useState('');
   const [expTotalManualOverride, setExpTotalManualOverride] = useState(false);
@@ -416,6 +417,12 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
         ? Math.max(0, Math.round(Number(expTotalDraft)))
         : computedTotal;
 
+    const parsedHours = Number(expWorkHoursDraft);
+    const workHours =
+      expWorkHoursDraft.trim() !== '' && !Number.isNaN(parsedHours) && parsedHours >= 0
+        ? Number(parsedHours.toFixed(2))
+        : undefined;
+
     const newItem: ProductionExpenseEntry = {
       id: `exp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       date: expDate || toLocalDateInputValue(),
@@ -423,6 +430,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
       itemName: resolvedName,
       quantity,
       unit: expUnit.trim() || EXPENSE_CATEGORY_META[expCategory].defaultUnit,
+      ...(workHours !== undefined ? { workHours } : {}),
       unitPrice,
       totalCost,
       notes: expNotes.trim(),
@@ -436,6 +444,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
 
     setExpManualName('');
     setExpQtyDraft('1');
+    setExpWorkHoursDraft('');
     setExpUnitPriceDraft('');
     setExpTotalDraft('');
     setExpTotalManualOverride(false);
@@ -475,14 +484,14 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
         if (expDateFilter && item.date !== expDateFilter) return false;
         if (
           q &&
-          !item.itemName.toLowerCase().includes(q) &&
-          !item.notes.toLowerCase().includes(q)
+          !String(item.itemName || '').toLowerCase().includes(q) &&
+          !String(item.notes || '').toLowerCase().includes(q)
         ) {
           return false;
         }
         return true;
       })
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   }, [expenses, expCatFilter, expDateFilter, expSearch]);
 
   const expenseTotalsByCategory = useMemo(() => {
@@ -494,11 +503,16 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
       lainnya: 0,
     };
     let grand = 0;
+    let totalWorkHours = 0;
     for (const e of expenses) {
-      map[e.category] = (map[e.category] || 0) + (e.totalCost || 0);
+      const cat = map[e.category] !== undefined ? e.category : 'lainnya';
+      map[cat] = (map[cat] || 0) + (e.totalCost || 0);
       grand += e.totalCost || 0;
+      if (typeof e.workHours === 'number' && !Number.isNaN(e.workHours)) {
+        totalWorkHours += e.workHours;
+      }
     }
-    return { byCat: map, grand };
+    return { byCat: map, grand, totalWorkHours };
   }, [expenses]);
 
   const handleExportExpensesCsv = () => {
@@ -509,6 +523,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
       'Nama Item',
       'Jumlah',
       'Satuan',
+      'Jam Kerja (jam)',
       'Harga Satuan (Rp)',
       'Total Biaya (Rp)',
       'Catatan',
@@ -520,6 +535,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
       e.itemName,
       e.quantity,
       e.unit,
+      typeof e.workHours === 'number' ? e.workHours : '',
       e.unitPrice,
       e.totalCost,
       e.notes,
@@ -671,15 +687,15 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
         if (saleDateFilter && s.date !== saleDateFilter) return false;
         if (
           q &&
-          !s.grade.toLowerCase().includes(q) &&
-          !s.buyer.toLowerCase().includes(q) &&
-          !s.notes.toLowerCase().includes(q)
+          !String(s.grade || '').toLowerCase().includes(q) &&
+          !String(s.buyer || '').toLowerCase().includes(q) &&
+          !String(s.notes || '').toLowerCase().includes(q)
         ) {
           return false;
         }
         return true;
       })
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   }, [sales, saleGradeFilter, saleDateFilter, saleSearch]);
 
   const salesSummary = useMemo(() => {
@@ -712,7 +728,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
   const selfSalesTracker = useMemo(() => {
     const allSelf = sales
       .filter((s) => s.grade === 'Jual sendiri')
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
 
     let unpaidCount = 0;
     let unpaidWeightKg = 0;
@@ -740,8 +756,8 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
       const q = saleSearch.trim().toLowerCase();
       if (
         q &&
-        !s.buyer.toLowerCase().includes(q) &&
-        !s.notes.toLowerCase().includes(q)
+        !String(s.buyer || '').toLowerCase().includes(q) &&
+        !String(s.notes || '').toLowerCase().includes(q)
       ) {
         return false;
       }
@@ -843,7 +859,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
     }
 
     const sortedDocs = [...allDocuments].sort((a, b) =>
-      a.createdAt.localeCompare(b.createdAt)
+      String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
     );
     return sortedDocs.map((docItem, idx) => {
       let exp = 0;
@@ -890,16 +906,25 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
       }
     };
 
+    const extractMonthIdx = (dateStr: string | undefined, fallbackIso: string | undefined): number => {
+      if (dateStr && /^\d{4}-\d{2}/.test(dateStr)) {
+        const parsed = parseInt(dateStr.slice(5, 7), 10) - 1;
+        if (Number.isFinite(parsed)) {
+          return Math.max(0, Math.min(11, parsed));
+        }
+      }
+      const d = fallbackIso ? new Date(fallbackIso) : new Date();
+      const m = d.getMonth();
+      return Number.isFinite(m) && m >= 0 && m <= 11 ? m : new Date().getMonth();
+    };
+
     for (const docItem of allDocuments) {
       for (const g of docItem.greenhouses) {
         for (const e of g.expenses || []) {
           const yr = extractYear(e.date, docItem.createdAt);
           ensureYear(yr);
           yearMap.get(yr)!.exp += e.totalCost || 0;
-          const mIdx =
-            e.date && /^\d{4}-\d{2}/.test(e.date)
-              ? Math.max(0, Math.min(11, parseInt(e.date.slice(5, 7), 10) - 1))
-              : new Date(docItem.createdAt).getMonth();
+          const mIdx = extractMonthIdx(e.date, docItem.createdAt);
           monthlyByYear.get(yr)![mIdx].exp += e.totalCost || 0;
         }
         for (const s of g.sales || []) {
@@ -907,10 +932,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
           ensureYear(yr);
           yearMap.get(yr)!.sal += s.totalAmount || 0;
           yearMap.get(yr)!.kg += s.weightKg || 0;
-          const mIdx =
-            s.date && /^\d{4}-\d{2}/.test(s.date)
-              ? Math.max(0, Math.min(11, parseInt(s.date.slice(5, 7), 10) - 1))
-              : new Date(docItem.createdAt).getMonth();
+          const mIdx = extractMonthIdx(s.date, docItem.createdAt);
           monthlyByYear.get(yr)![mIdx].sal += s.totalAmount || 0;
           monthlyByYear.get(yr)![mIdx].kg += s.weightKg || 0;
         }
@@ -1064,7 +1086,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                   Dashboard 1 — Biaya Produksi ({gh.name})
                 </h3>
                 <p className="text-xs" style={{ color: 'var(--app-text-muted)' }}>
-                  Pupuk, Fungisida, Insektisida, Tenaga Kerja, serta Benih &amp; AB MIX (SET) dengan opsi isi nama manual.
+                  Pupuk, Fungisida, Insektisida, Tenaga Kerja (orang &amp; jam kerja), serta Benih, AB MIX, Mulsa, Cocopeat &amp; Flanel.
                 </p>
               </div>
             </div>
@@ -1105,6 +1127,9 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                   </div>
                   <div className="mt-0.5 text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
                     {pct}% dari biaya
+                    {cat === 'tenaga_kerja' && expenseTotalsByCategory.totalWorkHours > 0
+                      ? ` · ${expenseTotalsByCategory.totalWorkHours.toLocaleString('id-ID')} jam`
+                      : ''}
                   </div>
                 </button>
               );
@@ -1236,8 +1261,29 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                   type="text"
                   value={expUnit}
                   onChange={(e) => setExpUnit(e.target.value)}
-                  placeholder="SET / kg / Botol"
+                  placeholder="SET / kg / orang"
                   className="h-9 w-full rounded-lg border px-2.5 text-xs focus:outline-none"
+                  style={{
+                    borderColor: 'var(--app-border)',
+                    backgroundColor: 'var(--app-surface)',
+                    color: 'var(--app-text)',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium mb-1">Jam Kerja (jam)</label>
+                <input
+                  type="number"
+                  step="any"
+                  min={0}
+                  placeholder={expCategory === 'tenaga_kerja' ? 'Misal: 8' : 'Opsional'}
+                  value={expWorkHoursDraft}
+                  onFocus={(e) => {
+                    if (e.currentTarget.value === '0') e.currentTarget.select();
+                  }}
+                  onChange={(e) => setExpWorkHoursDraft(e.target.value)}
+                  className="h-9 w-full rounded-lg border px-2.5 text-xs font-mono-tabular focus:outline-none"
                   style={{
                     borderColor: 'var(--app-border)',
                     backgroundColor: 'var(--app-surface)',
@@ -1489,6 +1535,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                     <th className="px-3 py-2.5 font-semibold">Kategori</th>
                     <th className="px-3 py-2.5 font-semibold">Nama Item</th>
                     <th className="px-3 py-2.5 font-semibold text-right">Qty &amp; Satuan</th>
+                    <th className="px-3 py-2.5 font-semibold text-right">Jam Kerja</th>
                     <th className="px-3 py-2.5 font-semibold text-right">Harga Satuan</th>
                     <th className="px-3 py-2.5 font-semibold text-right">Total Biaya</th>
                     <th className="px-3 py-2.5 font-semibold">Catatan</th>
@@ -1539,6 +1586,11 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                         <td className="px-3 py-2.5 font-semibold">{item.itemName}</td>
                         <td className="px-3 py-2.5 text-right font-mono-tabular whitespace-nowrap">
                           {item.quantity.toLocaleString('id-ID')} {item.unit}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono-tabular whitespace-nowrap">
+                          {typeof item.workHours === 'number' && item.workHours > 0
+                            ? `${item.workHours.toLocaleString('id-ID')} jam`
+                            : '—'}
                         </td>
                         <td className="px-3 py-2.5 text-right font-mono-tabular whitespace-nowrap">
                           {formatRp(item.unitPrice)}
@@ -2093,7 +2145,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                                 Berat Buah
                               </div>
                               <div className="text-sm font-bold font-mono-tabular">
-                                {item.weightKg.toLocaleString('id-ID', { maximumFractionDigits: 2 })} kg
+                                {(item.weightKg ?? 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })} kg
                               </div>
                             </div>
                             <div className="text-right">
@@ -2188,7 +2240,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                                 </div>
                               </td>
                               <td className="px-3 py-2.5 text-right font-bold font-mono-tabular text-sm whitespace-nowrap">
-                                {item.weightKg.toLocaleString('id-ID', { maximumFractionDigits: 2 })} kg
+                                {(item.weightKg ?? 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })} kg
                               </td>
                               <td className="px-3 py-2.5 text-right font-bold font-mono-tabular text-sm whitespace-nowrap text-emerald-700 dark:text-emerald-400">
                                 {formatRp(item.totalAmount)}
@@ -2478,7 +2530,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                           </div>
                         </td>
                         <td className="px-3 py-2.5 text-right font-semibold font-mono-tabular whitespace-nowrap">
-                          {item.weightKg.toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg
+                          {(item.weightKg ?? 0).toLocaleString('id-ID', { maximumFractionDigits: 1 })} kg
                         </td>
                         <td className="px-3 py-2.5 text-right font-mono-tabular whitespace-nowrap">
                           {formatRp(item.pricePerKg)}
@@ -2685,7 +2737,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                 <Scale className="h-3.5 w-3.5" />
               </div>
               <div className="mt-1.5 text-xl font-bold font-mono-tabular">
-                {profitSummary.marginPct.toFixed(1)}%
+                {(Number(profitSummary.marginPct) || 0).toFixed(1)}%
               </div>
               <div className="mt-1 text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>
                 Rata² jual: {profitSummary.totalKg > 0 ? `${formatRp(profitSummary.avgSellPerKg)}/kg` : '—'}
@@ -2957,7 +3009,7 @@ export const DashboardAccounting: React.FC<DashboardAccountingProps> = ({
                     Berat Buah
                   </div>
                   <div className="text-lg font-bold font-mono-tabular">
-                    {buyerPreviewSale.weightKg.toLocaleString('id-ID', { maximumFractionDigits: 2 })} kg
+                    {(buyerPreviewSale.weightKg ?? 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })} kg
                   </div>
                   {buyerPreviewSale.pricePerKg > 0 && (
                     <div className="text-[11px] font-mono-tabular" style={{ color: 'var(--app-text-muted)' }}>

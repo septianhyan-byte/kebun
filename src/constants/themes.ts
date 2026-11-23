@@ -412,6 +412,9 @@ export const MEDICINE_SUGGESTIONS: Record<TreatmentType, Array<{ name: string; a
     { name: 'Bakterisida Streptomycin Pasta', active: 'Pencegahan Busuk Lunak', dosage: '2 gr / 10 ml air' },
   ],
   pengocoran: [
+    { name: 'Agrept 20 WP', active: 'Streptomisin Sulfat 20% (Bakterisida Layu Bakteri / Busuk Lunak)', dosage: '1–2 gr/L' },
+    { name: 'Besromil 35 WP', active: 'Metalaksil 35% (Fungisida Sistemik Layu Fusarium & Busuk Akar)', dosage: '1–2 gr/L' },
+    { name: 'Velum Prime 400 SC', active: 'Fluopiram 400 g/L (Nematisida & Fungisida Akar)', dosage: '0,5–1 ml/L' },
     { name: 'Trichoderma harzianum', active: 'Agen Hayati Akar / Fusarium', dosage: '5 gr/L (50 ml/tanaman)' },
     { name: 'Asam Humat + Fulvat', active: 'Pemacu Serapan Akar NFT', dosage: '2 gr/L ke tandon' },
     { name: 'Propamokarb Hidroklorida', active: 'Pencegahan Pythium Akar', dosage: '1,5 ml/L' },
@@ -576,14 +579,14 @@ export const EXPENSE_CATEGORY_META: Record<
   tenaga_kerja: {
     label: '4. Tenaga Kerja',
     short: 'Tenaga Kerja',
-    defaultUnit: 'HOK',
-    desc: 'Upah tanam, perawatan, polinasi, panen, dan operator.',
+    defaultUnit: 'orang',
+    desc: 'Persiapan sebelum tanam, upah tanam, perawatan, polinasi, panen, dan operator.',
   },
   lainnya: {
-    label: '5. Lainnya (Benih & AB MIX)',
+    label: '5. Lainnya (Benih, AB MIX & Media)',
     short: 'Lainnya',
     defaultUnit: 'SET',
-    desc: 'Benih (Inthanon, The Blues, Kirin, Petravany, Honey Globe), AB MIX (SET).',
+    desc: 'Benih, AB MIX (SET), Mulsa (kg), Cocopeat (liter), Flanel (helai).',
   },
 };
 
@@ -625,11 +628,12 @@ export const EXPENSE_PRESET_OPTIONS: Record<ExpenseCategory, ExpensePresetOption
     { name: 'Winder', defaultUnit: 'Bungkus' },
   ],
   tenaga_kerja: [
-    { name: 'Tenaga Tanam & Pindah Bibit', defaultUnit: 'HOK' },
-    { name: 'Tenaga Perawatan & Pruning', defaultUnit: 'HOK' },
-    { name: 'Tenaga Polinasi & Seleksi Buah', defaultUnit: 'HOK' },
-    { name: 'Tenaga Penyemprotan & Kocor', defaultUnit: 'HOK' },
-    { name: 'Tenaga Panen & Sortir', defaultUnit: 'HOK' },
+    { name: 'Persiapan sebelum tanam', defaultUnit: 'orang' },
+    { name: 'Tenaga Tanam & Pindah Bibit', defaultUnit: 'orang' },
+    { name: 'Tenaga Perawatan & Pruning', defaultUnit: 'orang' },
+    { name: 'Tenaga Polinasi & Seleksi Buah', defaultUnit: 'orang' },
+    { name: 'Tenaga Penyemprotan & Kocor', defaultUnit: 'orang' },
+    { name: 'Tenaga Panen & Sortir', defaultUnit: 'orang' },
     { name: 'Gaji Penjaga / Operator GH', defaultUnit: 'Bulan' },
   ],
   lainnya: [
@@ -639,6 +643,9 @@ export const EXPENSE_PRESET_OPTIONS: Record<ExpenseCategory, ExpensePresetOption
     { name: 'Benih: Kirin', defaultUnit: 'Pack' },
     { name: 'Benih: Petravany', defaultUnit: 'Pack' },
     { name: 'Benih: Honey Globe', defaultUnit: 'Pack' },
+    { name: 'Mulsa', defaultUnit: 'kg' },
+    { name: 'Cocopeat', defaultUnit: 'liter' },
+    { name: 'Flanel', defaultUnit: 'helai' },
   ],
 };
 

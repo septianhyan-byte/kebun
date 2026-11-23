@@ -57,6 +57,7 @@ export interface ProductionExpenseEntry {
   itemName: string;
   quantity: number;
   unit: string;
+  workHours?: number;
   unitPrice: number;
   totalCost: number;
   notes: string;

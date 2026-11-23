@@ -50,7 +50,7 @@ export function formatEscPosReport(
   gh: GreenhouseData,
   selection: PrintSelection = DEFAULT_PRINT_SELECTION
 ): string {
-  const phaseSpec = GROWTH_PHASE_SPECS[gh.phase];
+  const phaseSpec = GROWTH_PHASE_SPECS[gh.phase] || GROWTH_PHASE_SPECS.vegetatif;
   const healthy = gh.plants.filter((p) => p.status === 'sehat').length;
   const attention = gh.plants.filter((p) => p.status === 'perhatian').length;
   const sick = gh.plants.filter((p) => p.status === 'sakit').length;
@@ -60,7 +60,7 @@ export function formatEscPosReport(
   ).length;
   const notFruiting = gh.plants.length - fruiting;
 
-  // Weight metrics
+  // Weight metrics (based on weighed fruits, separated by good vs bad)
   let sampledFruitCount = 0;
   let totalSampleKg = 0;
   let totalFruits = 0;
@@ -68,16 +68,30 @@ export function formatEscPosReport(
   let badPlants = 0;
   let goodFruits = 0;
   let badFruits = 0;
+  let goodSampledFruitCount = 0;
+  let badSampledFruitCount = 0;
+  let goodSampleKg = 0;
+  let badSampleKg = 0;
   for (const p of gh.plants) {
     if (p.status === 'kosong') continue;
-    if (p.estWeightKg > 0) {
-      totalSampleKg += p.estWeightKg;
-      const posWeights = Array.isArray(p.fruitWeights)
-        ? p.fruitWeights.filter((w) => Number(w) > 0)
-        : [];
-      sampledFruitCount +=
-        posWeights.length > 0 ? posWeights.length : Math.max(1, p.fruitCount || 1);
+    const posWeights = Array.isArray(p.fruitWeights)
+      ? p.fruitWeights.map((w) => Math.max(0, Number(w) || 0)).filter((w) => w > 0)
+      : [];
+    let plantWeighedKg = 0;
+    let plantWeighedFruits = 0;
+    if (posWeights.length > 0) {
+      plantWeighedKg = posWeights.reduce((a, b) => a + b, 0);
+      plantWeighedFruits = posWeights.length;
+    } else if (p.estWeightKg > 0) {
+      plantWeighedKg = p.estWeightKg;
+      plantWeighedFruits = Math.max(1, p.fruitCount || 1);
     }
+
+    if (plantWeighedFruits > 0 && plantWeighedKg > 0) {
+      sampledFruitCount += plantWeighedFruits;
+      totalSampleKg += plantWeighedKg;
+    }
+
     const isFruit = p.fruitingStatus ? p.fruitingStatus === 'berbuah' : p.fruitCount > 0;
     if (isFruit) {
       const qty = Math.max(1, p.fruitCount || 0);
@@ -85,22 +99,36 @@ export function formatEscPosReport(
       if (p.fruitQuality === 'jelek') {
         badPlants += 1;
         badFruits += qty;
+        if (plantWeighedFruits > 0 && plantWeighedKg > 0) {
+          badSampledFruitCount += plantWeighedFruits;
+          badSampleKg += plantWeighedKg;
+        }
       } else {
         goodPlants += 1;
         goodFruits += qty;
+        if (plantWeighedFruits > 0 && plantWeighedKg > 0) {
+          goodSampledFruitCount += plantWeighedFruits;
+          goodSampleKg += plantWeighedKg;
+        }
       }
     }
   }
-  const sampleAvgKg = sampledFruitCount > 0 ? totalSampleKg / sampledFruitCount : 0;
-  const effAvgKg =
-    typeof gh.avgMelonWeightKg === 'number' && !Number.isNaN(gh.avgMelonWeightKg)
-      ? gh.avgMelonWeightKg
-      : sampleAvgKg > 0
-      ? Number(sampleAvgKg.toFixed(2))
-      : 1.5;
-  const estTotalWeightKg = totalFruits * effAvgKg;
-  const goodEstWeightKg = goodFruits * effAvgKg;
-  const badEstWeightKg = badFruits * effAvgKg;
+  const hasWeighedFruits = sampledFruitCount > 0;
+  const sampleAvgKg = hasWeighedFruits ? totalSampleKg / sampledFruitCount : 0;
+  const goodSampleAvgKg = goodSampledFruitCount > 0 ? goodSampleKg / goodSampledFruitCount : 0;
+  const badSampleAvgKg = badSampledFruitCount > 0 ? badSampleKg / badSampledFruitCount : 0;
+  const effAvgKg = hasWeighedFruits
+    ? Number(sampleAvgKg.toFixed(2))
+    : typeof gh.avgMelonWeightKg === 'number' && !Number.isNaN(gh.avgMelonWeightKg)
+    ? gh.avgMelonWeightKg
+    : 0;
+  const goodEffAvgKg =
+    goodSampledFruitCount > 0 ? Number(goodSampleAvgKg.toFixed(2)) : effAvgKg;
+  const badEffAvgKg =
+    badSampledFruitCount > 0 ? Number(badSampleAvgKg.toFixed(2)) : effAvgKg;
+  const goodEstWeightKg = goodFruits * goodEffAvgKg;
+  const badEstWeightKg = badFruits * badEffAvgKg;
+  const estTotalWeightKg = totalFruits > 0 ? goodEstWeightKg + badEstWeightKg : 0;
 
   const latestLog = gh.waterLogs[0];
   const pendingTreatments = gh.treatments.filter((t) => t.status === 'terjadwal');
@@ -117,15 +145,23 @@ export function formatEscPosReport(
     `Cetak   : ${new Date().toLocaleString('id-ID')}`,
   ];
 
+  const waterPpm = Number(gh.currentWater?.ppm ?? 0);
+  const waterEc = Number(gh.currentWater?.ec ?? 0);
+  const waterPh = Number(gh.currentWater?.ph ?? 0);
+  const waterTemp = Number(gh.currentWater?.tempC ?? 0);
+  const waterRes = Number(gh.currentWater?.reservoirPct ?? 0);
+  const logPpmBefore = Number(latestLog?.ppmBefore ?? waterPpm);
+  const logPhBefore = Number(latestLog?.phBefore ?? waterPh);
+
   if (selection.water) {
     lines.push(
       '--------------------------------',
       '[1] KONTROL NUTRISI & AIR',
-      `PPM     : ${latestLog?.ppmBefore ?? gh.currentWater.ppm} -> ${gh.currentWater.ppm} ppm`,
-      `EC      : ${gh.currentWater.ec.toFixed(2)} mS/cm`,
-      `pH Air  : ${(latestLog?.phBefore ?? gh.currentWater.ph).toFixed(2)} -> ${gh.currentWater.ph.toFixed(2)}`,
-      `Suhu    : ${gh.currentWater.tempC.toFixed(1)} C`,
-      `Tandon  : ${gh.currentWater.reservoirPct}% (${gh.reservoirLiters}L)`
+      `PPM     : ${logPpmBefore} -> ${waterPpm} ppm`,
+      `EC      : ${waterEc.toFixed(2)} mS/cm`,
+      `pH Air  : ${logPhBefore.toFixed(2)} -> ${waterPh.toFixed(2)}`,
+      `Suhu    : ${waterTemp.toFixed(1)} C`,
+      `Tandon  : ${waterRes}% (${gh.reservoirLiters}L)`
     );
   }
 
@@ -137,9 +173,9 @@ export function formatEscPosReport(
         ? ['Tidak ada jadwal tertunda']
         : pendingTreatments.slice(0, 5).map(
             (t) =>
-              `- ${TREATMENT_TYPE_LABELS[t.type].short}${
+              `- ${TREATMENT_TYPE_LABELS[t.type]?.short || t.type}${
                 t.type === 'penyemprotan' && t.sprayCategory ? ` (${t.sprayCategory})` : ''
-              }: ${t.medicineName} (${t.dosage}) -> ${t.targetPlants}`
+              }: ${t.medicineName || '-'} (${t.dosage || '-'}) -> ${t.targetPlants || '-'}`
           ))
     );
   }
@@ -153,10 +189,10 @@ export function formatEscPosReport(
       `Sakit       : ${sick}`,
       `Panen       : ${harvest}`,
       `Berbuah     : ${fruiting}`,
-      `Buah Bagus  : ${goodPlants} phn (${goodEstWeightKg.toFixed(1)} kg)`,
-      `Buah Jelek  : ${badPlants} phn (${badEstWeightKg.toFixed(1)} kg)`,
+      `Buah Bagus  : ${goodPlants} phn (${goodEstWeightKg.toFixed(1)} kg, avg ${goodSampledFruitCount > 0 ? goodSampleAvgKg.toFixed(2) : '-'} kg)`,
+      `Buah Jelek  : ${badPlants} phn (${badEstWeightKg.toFixed(1)} kg, avg ${badSampledFruitCount > 0 ? badSampleAvgKg.toFixed(2) : '-'} kg)`,
       `Tdk Berbuah : ${notFruiting}`,
-      `Rata2 Berat : ${effAvgKg.toFixed(2)} kg/buah`,
+      `Rata2 Berat : ${(hasWeighedFruits ? sampleAvgKg : effAvgKg).toFixed(2)} kg/buah`,
       `Est. Panen  : ${estTotalWeightKg.toFixed(1)} kg (${totalFruits} buah)`
     );
   }

@@ -60,12 +60,12 @@ export interface FirestoreErrorInfo {
   };
 }
 
-export function handleFirestoreError(
+function buildFirestoreErrorInfo(
   error: unknown,
   operationType: OperationType,
   path: string | null
-): never {
-  const errInfo: FirestoreErrorInfo = {
+): FirestoreErrorInfo {
+  return {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
       userId: auth.currentUser?.uid,
@@ -82,6 +82,48 @@ export function handleFirestoreError(
     operationType,
     path,
   };
+}
+
+export function parseFirestoreErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error || '');
+  let inner = raw;
+  try {
+    const parsed = JSON.parse(raw) as Partial<FirestoreErrorInfo>;
+    if (parsed && typeof parsed.error === 'string') {
+      inner = parsed.error;
+    }
+  } catch {
+    // not JSON
+  }
+  const lower = inner.toLowerCase();
+  if (lower.includes('permission-denied') || lower.includes('insufficient permissions')) {
+    return 'Akses Cloud ditolak (permission denied). Pastikan login Google Anda aktif & terverifikasi.';
+  }
+  if (lower.includes('resource-exhausted') || lower.includes('quota')) {
+    return 'Kuota sinkronisasi Cloud sedang penuh. Data tetap tersimpan aman secara lokal.';
+  }
+  if (lower.includes('unavailable') || lower.includes('offline')) {
+    return 'Koneksi ke Cloud terputus. Aplikasi otomatis menggunakan data cache lokal.';
+  }
+  return inner || 'Terjadi gangguan sinkronisasi Cloud. Data tetap aman tersimpan di perangkat.';
+}
+
+export function formatFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): string {
+  const errInfo = buildFirestoreErrorInfo(error, operationType, path);
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  return parseFirestoreErrorMessage(errInfo.error);
+}
+
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): never {
+  const errInfo = buildFirestoreErrorInfo(error, operationType, path);
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } fr
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { AlertTriangle, BellRing, ChevronLeft, ChevronRight, Cloud, Edit3, Info, Plus } from 'lucide-react';
 import { BOTANICAL_THEMES, FONT_OPTIONS, GROWTH_PHASE_SPECS } from './constants/themes';
-import { auth, googleProvider } from './firebase';
+import { auth, googleProvider, parseFirestoreErrorMessage } from './firebase';
 import { useOnlineStatus } from './hooks/usePWAInstall';
 import {
   addGreenhouseToCloud,
@@ -42,6 +42,7 @@ import {
   loadPendingPaymentSync,
   loadPendingSyncQueue,
   loadSettings,
+  normalizeSeasonDocument,
   saveDocuments,
   saveOfflineModePref,
   savePaymentProfile,
@@ -353,8 +354,8 @@ export default function App() {
       }));
     } catch (err) {
       setSyncError(
-        err instanceof Error
-          ? err.message
+        err
+          ? parseFirestoreErrorMessage(err)
           : 'Sebagian data offline belum tersinkronkan. Akan dicoba lagi saat sinyal stabil.'
       );
     } finally {
@@ -378,7 +379,7 @@ export default function App() {
       setSyncError('');
       if (user && isBrowserOnline && !manualOfflineMode) {
         void upsertUserProfile(user).catch((err) => {
-          setSyncError(err instanceof Error ? err.message : 'Gagal memuat profil pengguna.');
+          setSyncError(parseFirestoreErrorMessage(err));
         });
       } else if (!user) {
         setCloudMetas([]);
@@ -392,65 +393,87 @@ export default function App() {
   // Subscribe to user's Cloud Seasons metadata when signed in & online
   useEffect(() => {
     if (!authReady || !cloudUser || isEffectivelyOffline) return;
-    const unsub = subscribeUserSeasons(cloudUser.uid, (metas) => {
-      setCloudMetas(metas);
-      if (metas.length === 0 && !autoUploadedUsersRef.current.has(cloudUser.uid)) {
-        autoUploadedUsersRef.current.add(cloudUser.uid);
-        const currentLocal = docStoreRef.current.documents;
-        setSyncBusy(true);
-        void Promise.all(
-          currentLocal.map((d) => uploadSeasonToCloud(cloudUser, d, deviceLabel))
-        )
-          .catch((err) => {
-            setSyncError(err instanceof Error ? err.message : 'Gagal mengunggah data awal ke Cloud.');
-          })
-          .finally(() => setSyncBusy(false));
-      } else if (metas.length > 0) {
-        const pendingUpserts = new Set(pendingQueueRef.current.upsertIds);
-        const pendingDeletes = new Set(pendingQueueRef.current.deleteIds);
-        const visibleMetas = metas.filter((m) => !pendingDeletes.has(m.id));
-        if (visibleMetas.length === 0) return;
+    const unsub = subscribeUserSeasons(
+      cloudUser.uid,
+      (metas) => {
+        setCloudMetas(metas);
+        if (metas.length === 0 && !autoUploadedUsersRef.current.has(cloudUser.uid)) {
+          autoUploadedUsersRef.current.add(cloudUser.uid);
+          const currentLocal = docStoreRef.current.documents;
+          setSyncBusy(true);
+          void Promise.all(
+            currentLocal.map((d) => uploadSeasonToCloud(cloudUser, d, deviceLabel))
+          )
+            .catch((err) => {
+              setSyncError(parseFirestoreErrorMessage(err));
+            })
+            .finally(() => setSyncBusy(false));
+        } else if (metas.length > 0) {
+          const pendingUpserts = new Set(pendingQueueRef.current.upsertIds);
+          const pendingDeletes = new Set(pendingQueueRef.current.deleteIds);
+          const visibleMetas = metas.filter((m) => !pendingDeletes.has(m.id));
+          if (visibleMetas.length === 0) return;
 
-        setDocStore((prev) => {
-          const existsInCloud = visibleMetas.some((m) => m.id === prev.activeDocId);
-          const nextActiveId =
-            existsInCloud || pendingUpserts.has(prev.activeDocId)
-              ? prev.activeDocId
-              : visibleMetas[0].id;
-          const mergedDocs = visibleMetas.map((meta) => {
-            const existing = prev.documents.find((d) => d.id === meta.id);
-            if (existing) {
-              if (pendingUpserts.has(meta.id)) {
-                return existing;
+          setDocStore((prev) => {
+            const existsInCloud = visibleMetas.some((m) => m.id === prev.activeDocId);
+            const nextActiveId =
+              existsInCloud || pendingUpserts.has(prev.activeDocId)
+                ? prev.activeDocId
+                : visibleMetas[0].id;
+            const mergedDocs = visibleMetas.map((meta) => {
+              const existing = prev.documents.find((d) => d.id === meta.id);
+              if (existing) {
+                if (pendingUpserts.has(meta.id)) {
+                  return existing;
+                }
+                return {
+                  ...existing,
+                  title: meta.title,
+                  notes: meta.notes,
+                  updatedAt: meta.updatedAt,
+                };
               }
+              const fallbackGhs =
+                prev.documents[0]?.greenhouses?.length
+                  ? prev.documents[0].greenhouses
+                  : docStoreRef.current.documents[0]?.greenhouses?.length
+                  ? docStoreRef.current.documents[0].greenhouses
+                  : [
+                      createGreenhouse(
+                        meta.activeGhId || 'gh-1',
+                        'GH 1',
+                        'Melon Inthanon RZ',
+                        1000,
+                        'semai',
+                        600,
+                        6.6,
+                        1,
+                        true
+                      ),
+                    ];
               return {
-                ...existing,
+                id: meta.id,
                 title: meta.title,
-                notes: meta.notes,
+                createdAt: meta.createdAt,
                 updatedAt: meta.updatedAt,
+                notes: meta.notes,
+                activeGhId: meta.activeGhId || fallbackGhs[0].id,
+                greenhouses: fallbackGhs,
               };
-            }
+            });
+            // Preserve locally created offline documents not yet uploaded
+            const localOnlyPending = prev.documents.filter(
+              (d) => pendingUpserts.has(d.id) && !mergedDocs.some((m) => m.id === d.id)
+            );
             return {
-              id: meta.id,
-              title: meta.title,
-              createdAt: meta.createdAt,
-              updatedAt: meta.updatedAt,
-              notes: meta.notes,
-              activeGhId: meta.activeGhId,
-              greenhouses: prev.documents[0]?.greenhouses || docStoreRef.current.documents[0]?.greenhouses || [],
+              documents: [...localOnlyPending, ...mergedDocs],
+              activeDocId: nextActiveId,
             };
           });
-          // Preserve locally created offline documents not yet uploaded
-          const localOnlyPending = prev.documents.filter(
-            (d) => pendingUpserts.has(d.id) && !mergedDocs.some((m) => m.id === d.id)
-          );
-          return {
-            documents: [...localOnlyPending, ...mergedDocs],
-            activeDocId: nextActiveId,
-          };
-        });
-      }
-    });
+        }
+      },
+      (msg) => setSyncError(msg)
+    );
     return () => unsub();
   }, [authReady, cloudUser, isEffectivelyOffline, deviceLabel]);
 
@@ -488,7 +511,8 @@ export default function App() {
           ),
         }));
       },
-      (acts) => setActivities(acts)
+      (acts) => setActivities(acts),
+      (msg) => setSyncError(msg)
     );
     return () => unsub();
   }, [authReady, cloudUser, activeCloudMeta, isEffectivelyOffline]);
@@ -531,29 +555,33 @@ export default function App() {
   // Subscribe to QRIS & Bank Payment Profile across devices sharing the same Google Account
   useEffect(() => {
     if (!authReady || !cloudUser || isEffectivelyOffline) return;
-    const unsub = subscribePaymentProfileRealtime(cloudUser.uid, (cloudProfile) => {
-      if (cloudProfile) {
-        if (!pendingPaymentSyncRef.current) {
-          setPaymentProfile(cloudProfile);
+    const unsub = subscribePaymentProfileRealtime(
+      cloudUser.uid,
+      (cloudProfile) => {
+        if (cloudProfile) {
+          if (!pendingPaymentSyncRef.current) {
+            setPaymentProfile(cloudProfile);
+          }
+        } else {
+          const local = paymentProfileRef.current;
+          const hasCustomLocalData =
+            Boolean(local.bankName.trim()) ||
+            Boolean(local.accountNumber.trim()) ||
+            Boolean(local.accountHolderName.trim()) ||
+            Boolean(local.qrisImageDataUrl) ||
+            Boolean(local.storePhone.trim()) ||
+            Boolean(local.storeAddress.trim()) ||
+            local.storeName !== DEFAULT_PAYMENT_PROFILE.storeName ||
+            local.footerNote !== DEFAULT_PAYMENT_PROFILE.footerNote;
+          if (hasCustomLocalData) {
+            void savePaymentProfileToCloud(cloudUser, local, deviceLabel).catch(() => {
+              setPendingPaymentSync(true);
+            });
+          }
         }
-      } else {
-        const local = paymentProfileRef.current;
-        const hasCustomLocalData =
-          Boolean(local.bankName.trim()) ||
-          Boolean(local.accountNumber.trim()) ||
-          Boolean(local.accountHolderName.trim()) ||
-          Boolean(local.qrisImageDataUrl) ||
-          Boolean(local.storePhone.trim()) ||
-          Boolean(local.storeAddress.trim()) ||
-          local.storeName !== DEFAULT_PAYMENT_PROFILE.storeName ||
-          local.footerNote !== DEFAULT_PAYMENT_PROFILE.footerNote;
-        if (hasCustomLocalData) {
-          void savePaymentProfileToCloud(cloudUser, local, deviceLabel).catch(() => {
-            setPendingPaymentSync(true);
-          });
-        }
-      }
-    });
+      },
+      (msg) => setSyncError(msg)
+    );
     return () => unsub();
   }, [authReady, cloudUser, isEffectivelyOffline, deviceLabel]);
 
@@ -1043,16 +1071,17 @@ export default function App() {
   };
 
   const handleImportDocument = (doc: SeasonDocument) => {
+    const normalized = normalizeSeasonDocument(doc);
     setDocStore((prev) => ({
-      documents: [doc, ...prev.documents],
-      activeDocId: doc.id,
+      documents: [normalized, ...prev.documents],
+      activeDocId: normalized.id,
     }));
     if (cloudUser) {
       if (isEffectivelyOffline) {
-        enqueueUpsertSeason(doc.id);
+        enqueueUpsertSeason(normalized.id);
       } else {
-        void uploadSeasonToCloud(cloudUser, doc, deviceLabel).catch(() => {
-          enqueueUpsertSeason(doc.id);
+        void uploadSeasonToCloud(cloudUser, normalized, deviceLabel).catch(() => {
+          enqueueUpsertSeason(normalized.id);
         });
       }
     }
@@ -1177,7 +1206,7 @@ export default function App() {
                   {hstDays} HST (Tanam {activeGh.plantingDate})
                 </span>
                 <span aria-hidden="true">·</span>
-                <span>{GROWTH_PHASE_SPECS[activeGh.phase].label}</span>
+                <span>{(GROWTH_PHASE_SPECS[activeGh.phase] || GROWTH_PHASE_SPECS.vegetatif).label}</span>
                 {cloudUser && (
                   <>
                     <span aria-hidden="true">·</span>
