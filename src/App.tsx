@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
-import { AlertTriangle, BellRing, ChevronLeft, ChevronRight, Cloud, Edit3, Info, Plus } from 'lucide-react';
+import {
+  getRedirectResult,
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+  type User,
+} from 'firebase/auth';
+import { AlertTriangle, BellRing, ChevronLeft, ChevronRight, Cloud, CloudOff, Edit3, Info, Plus } from 'lucide-react';
 import { BOTANICAL_THEMES, FONT_OPTIONS, GROWTH_PHASE_SPECS } from './constants/themes';
 import { auth, googleProvider, parseFirestoreErrorMessage } from './firebase';
 import { useOnlineStatus } from './hooks/usePWAInstall';
@@ -82,6 +89,27 @@ function hexToSoftRgba(hex: string, alpha = 0.12): string {
 
 const DASHBOARD_ORDER: DashboardTab[] = ['water', 'treatment', 'plants', 'accounting'];
 
+function formatGoogleAuthError(err: unknown): string {
+  const code =
+    err && typeof err === 'object' && 'code' in err
+      ? String((err as { code?: unknown }).code || '')
+      : '';
+  if (code === 'auth/unauthorized-domain') {
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    return `Domain aplikasi (${host}) belum diizinkan di Firebase Authentication → Authorized Domains. Gunakan URL aplikasi resmi yang sudah terdaftar atau tambahkan domain ini di Firebase Console.`;
+  }
+  if (code === 'auth/popup-blocked') {
+    return 'Popup login Google diblokir oleh browser. Izinkan popup atau buka langsung di Google Chrome.';
+  }
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    return 'Jendela login Google ditutup sebelum selesai. Silakan coba masuk lagi.';
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'Koneksi internet terputus saat menghubungi layanan login Google.';
+  }
+  return err instanceof Error ? err.message : 'Login Google dibatalkan atau gagal.';
+}
+
 function hasHorizontalScrollAncestor(
   target: EventTarget | null,
   boundary: HTMLElement | null
@@ -136,7 +164,7 @@ export default function App() {
   const pendingPaymentSyncRef = useRef(pendingPaymentSync);
   pendingPaymentSyncRef.current = pendingPaymentSync;
   const paymentSyncTimerRef = useRef<number | null>(null);
-  const fetchedOtherSeasonIdsRef = useRef<Set<string>>(new Set());
+  const fetchedOtherSeasonUpdatedAtRef = useRef<Map<string, string>>(new Map());
 
   // Firebase Auth, Offline Mode & Real-Time Cloud Sync state
   const isBrowserOnline = useOnlineStatus();
@@ -157,6 +185,10 @@ export default function App() {
   docStoreRef.current = docStore;
   const pendingQueueRef = useRef(pendingQueue);
   pendingQueueRef.current = pendingQueue;
+  const activeCloudMetaRef = useRef<CloudSeasonMeta | null>(null);
+  const cloudMetasRef = useRef<CloudSeasonMeta[]>(cloudMetas);
+  cloudMetasRef.current = cloudMetas;
+  const skippedRemoteSeasonIdsRef = useRef<Set<string>>(new Set());
   const flushingRef = useRef(false);
   const pendingDeltaMapRef = useRef<
     Map<
@@ -276,15 +308,47 @@ export default function App() {
         deviceLabel: label,
       })
         .then(() => {
-          seasonEchoHoldUntilRef.current.set(seasonId, Date.now() + 1800);
+          seasonEchoHoldUntilRef.current.delete(seasonId);
+          setSyncError('');
         })
-        .catch(() => {
+        .catch((err) => {
+          setSyncError(parseFirestoreErrorMessage(err));
           enqueueUpsertSeason(seasonId);
         })
         .finally(() => {
           const curr = inFlightDeltaSeasonRef.current.get(seasonId) || 1;
           if (curr <= 1) {
             inFlightDeltaSeasonRef.current.delete(seasonId);
+            const hasMorePending = Array.from(pendingDeltaMapRef.current.values()).some(
+              (item) => item.seasonId === seasonId
+            );
+            if (
+              !hasMorePending &&
+              skippedRemoteSeasonIdsRef.current.has(seasonId) &&
+              !pendingQueueRef.current.upsertIds.includes(seasonId)
+            ) {
+              skippedRemoteSeasonIdsRef.current.delete(seasonId);
+              const meta = cloudMetasRef.current.find((m) => m.id === seasonId);
+              if (meta) {
+                void fetchSeasonFromCloud(user.uid, meta)
+                  .then((fresh) => {
+                    if (!fresh) return;
+                    if (
+                      pendingQueueRef.current.upsertIds.includes(fresh.id) ||
+                      (inFlightDeltaSeasonRef.current.get(fresh.id) || 0) > 0
+                    ) {
+                      return;
+                    }
+                    setDocStore((prev) => ({
+                      ...prev,
+                      documents: prev.documents.map((d) => (d.id === fresh.id ? fresh : d)),
+                    }));
+                  })
+                  .catch(() => {
+                    // ignore transient refresh fetch error
+                  });
+              }
+            }
           } else {
             inFlightDeltaSeasonRef.current.set(seasonId, curr - 1);
           }
@@ -371,6 +435,13 @@ export default function App() {
     }
   }, [authReady, cloudUser, isEffectivelyOffline, pendingSyncCount, flushPendingOfflineQueue]);
 
+  // Complete any redirect-based Google Auth flow (used on PWA / mobile WebViews)
+  useEffect(() => {
+    void getRedirectResult(auth).catch((err) => {
+      setSyncError(formatGoogleAuthError(err));
+    });
+  }, []);
+
   // Listen to Firebase Auth state
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
@@ -384,7 +455,8 @@ export default function App() {
       } else if (!user) {
         setCloudMetas([]);
         setActivities([]);
-        fetchedOtherSeasonIdsRef.current.clear();
+        fetchedOtherSeasonUpdatedAtRef.current.clear();
+        skippedRemoteSeasonIdsRef.current.clear();
       }
     });
     return () => unsub();
@@ -482,12 +554,16 @@ export default function App() {
     () => cloudMetas.find((m) => m.id === docStore.activeDocId) || cloudMetas[0] || null,
     [cloudMetas, docStore.activeDocId]
   );
+  activeCloudMetaRef.current = activeCloudMeta;
+  const activeCloudSeasonId = activeCloudMeta?.id || '';
 
   useEffect(() => {
-    if (!authReady || !cloudUser || !activeCloudMeta || isEffectivelyOffline) return;
+    if (!authReady || !cloudUser || !activeCloudSeasonId || isEffectivelyOffline) return;
+    const initialMeta = activeCloudMetaRef.current;
+    if (!initialMeta) return;
     const unsub = subscribeSeasonRealtime(
       cloudUser.uid,
-      activeCloudMeta,
+      () => activeCloudMetaRef.current || initialMeta,
       (hydratedSeason) => {
         // Protect locally modified offline/pending documents & prevent cloud echo clobbering mid-typing
         const hasPendingDelta = Array.from(pendingDeltaMapRef.current.values()).some(
@@ -502,8 +578,10 @@ export default function App() {
           hasInFlightDelta ||
           Date.now() < holdUntil
         ) {
+          skippedRemoteSeasonIdsRef.current.add(hydratedSeason.id);
           return;
         }
+        skippedRemoteSeasonIdsRef.current.delete(hydratedSeason.id);
         setDocStore((prev) => ({
           ...prev,
           documents: prev.documents.map((d) =>
@@ -515,21 +593,21 @@ export default function App() {
       (msg) => setSyncError(msg)
     );
     return () => unsub();
-  }, [authReady, cloudUser, activeCloudMeta, isEffectivelyOffline]);
+  }, [authReady, cloudUser, activeCloudSeasonId, isEffectivelyOffline]);
 
-  // Hydrate non-active seasons on secondary devices so Dashboard 3 period & annual charts have complete Cloud data
+  // Hydrate non-active seasons on secondary devices & refresh when updatedAt changes
   useEffect(() => {
     if (!authReady || !cloudUser || isEffectivelyOffline || cloudMetas.length <= 1) return;
     const otherMetas = cloudMetas.filter(
       (m) =>
-        m.id !== activeCloudMeta?.id &&
+        m.id !== activeCloudSeasonId &&
         !pendingQueueRef.current.upsertIds.includes(m.id) &&
-        !fetchedOtherSeasonIdsRef.current.has(m.id)
+        fetchedOtherSeasonUpdatedAtRef.current.get(m.id) !== m.updatedAt
     );
     if (otherMetas.length === 0) return;
 
     let cancelled = false;
-    otherMetas.forEach((m) => fetchedOtherSeasonIdsRef.current.add(m.id));
+    otherMetas.forEach((m) => fetchedOtherSeasonUpdatedAtRef.current.set(m.id, m.updatedAt));
 
     void Promise.all(
       otherMetas.map(async (meta) => {
@@ -542,7 +620,7 @@ export default function App() {
             documents: prev.documents.map((d) => (d.id === hydrated.id ? hydrated : d)),
           }));
         } catch {
-          fetchedOtherSeasonIdsRef.current.delete(meta.id);
+          fetchedOtherSeasonUpdatedAtRef.current.delete(meta.id);
         }
       })
     );
@@ -550,7 +628,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [authReady, cloudUser, isEffectivelyOffline, cloudMetas, activeCloudMeta?.id]);
+  }, [authReady, cloudUser, isEffectivelyOffline, cloudMetas, activeCloudSeasonId]);
 
   // Subscribe to QRIS & Bank Payment Profile across devices sharing the same Google Account
   useEffect(() => {
@@ -643,7 +721,23 @@ export default function App() {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
-      setSyncError(err instanceof Error ? err.message : 'Login Google dibatalkan atau gagal.');
+      const code =
+        err && typeof err === 'object' && 'code' in err
+          ? String((err as { code?: unknown }).code || '')
+          : '';
+      if (
+        code === 'auth/popup-blocked' ||
+        code === 'auth/operation-not-supported-in-this-environment'
+      ) {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectErr) {
+          setSyncError(formatGoogleAuthError(redirectErr));
+        }
+      } else {
+        setSyncError(formatGoogleAuthError(err));
+      }
     } finally {
       setSyncBusy(false);
     }
@@ -798,7 +892,8 @@ export default function App() {
       if (isEffectivelyOffline) {
         enqueueUpsertSeason(seasonId);
       } else {
-        void updateActiveGhInCloud(cloudUser, seasonId, ghId, deviceLabel).catch(() => {
+        void updateActiveGhInCloud(cloudUser, seasonId, ghId, deviceLabel).catch((err) => {
+          setSyncError(parseFirestoreErrorMessage(err));
           enqueueUpsertSeason(seasonId);
         });
       }
@@ -846,7 +941,10 @@ export default function App() {
         enqueueUpsertSeason(activeDoc.id);
       } else {
         void addGreenhouseToCloud(cloudUser, activeDoc.id, created, nextOrder, deviceLabel).catch(
-          () => enqueueUpsertSeason(activeDoc.id)
+          (err) => {
+            setSyncError(parseFirestoreErrorMessage(err));
+            enqueueUpsertSeason(activeDoc.id);
+          }
         );
       }
     }
@@ -925,7 +1023,10 @@ export default function App() {
           nextActiveId,
           nextOrder,
           deviceLabel
-        ).catch(() => enqueueUpsertSeason(activeDoc.id));
+        ).catch((err) => {
+          setSyncError(parseFirestoreErrorMessage(err));
+          enqueueUpsertSeason(activeDoc.id);
+        });
       }
     }
   };
@@ -984,7 +1085,8 @@ export default function App() {
       if (isEffectivelyOffline) {
         enqueueUpsertSeason(newDoc.id);
       } else {
-        void uploadSeasonToCloud(cloudUser, newDoc, deviceLabel).catch(() => {
+        void uploadSeasonToCloud(cloudUser, newDoc, deviceLabel).catch((err) => {
+          setSyncError(parseFirestoreErrorMessage(err));
           enqueueUpsertSeason(newDoc.id);
         });
       }
@@ -1007,7 +1109,8 @@ export default function App() {
       if (isEffectivelyOffline) {
         enqueueDeleteSeason(docId);
       } else {
-        void deleteSeasonFromCloud(cloudUser, docId).catch(() => {
+        void deleteSeasonFromCloud(cloudUser, docId).catch((err) => {
+          setSyncError(parseFirestoreErrorMessage(err));
           enqueueDeleteSeason(docId);
         });
       }
@@ -1042,7 +1145,8 @@ export default function App() {
           if (isEffectivelyOffline) {
             enqueueDeleteSeason(id);
           } else {
-            void deleteSeasonFromCloud(cloudUser, id).catch(() => {
+            void deleteSeasonFromCloud(cloudUser, id).catch((err) => {
+              setSyncError(parseFirestoreErrorMessage(err));
               enqueueDeleteSeason(id);
             });
           }
@@ -1062,7 +1166,8 @@ export default function App() {
         if (isEffectivelyOffline) {
           enqueueDeleteSeason(id);
         } else {
-          void deleteSeasonFromCloud(cloudUser, id).catch(() => {
+          void deleteSeasonFromCloud(cloudUser, id).catch((err) => {
+            setSyncError(parseFirestoreErrorMessage(err));
             enqueueDeleteSeason(id);
           });
         }
@@ -1080,7 +1185,8 @@ export default function App() {
       if (isEffectivelyOffline) {
         enqueueUpsertSeason(normalized.id);
       } else {
-        void uploadSeasonToCloud(cloudUser, normalized, deviceLabel).catch(() => {
+        void uploadSeasonToCloud(cloudUser, normalized, deviceLabel).catch((err) => {
+          setSyncError(parseFirestoreErrorMessage(err));
           enqueueUpsertSeason(normalized.id);
         });
       }
@@ -1372,6 +1478,38 @@ export default function App() {
             </div>
           </div>
         </section>
+
+        {/* Cloud Sync / Auth Error Banner */}
+        {syncError && (
+          <section
+            className="flex flex-col gap-2 rounded-xl border border-rose-500/50 bg-rose-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+            role="alert"
+          >
+            <div className="flex items-start gap-2.5 text-rose-700 dark:text-rose-200">
+              <CloudOff className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="text-xs leading-relaxed">
+                <div className="font-bold">Sinkronisasi Cloud Membutuhkan Perhatian</div>
+                <div>{syncError}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+              <button
+                type="button"
+                onClick={() => setAccountModalOpen(true)}
+                className="rounded-lg border border-rose-500/40 bg-white/80 dark:bg-black/30 px-2.5 py-1 text-xs font-semibold text-rose-700 dark:text-rose-200 cursor-pointer"
+              >
+                Cek Akun & Sinkronisasi
+              </button>
+              <button
+                type="button"
+                onClick={() => setSyncError('')}
+                className="text-xs font-medium underline text-rose-700 dark:text-rose-200 cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
+          </section>
+        )}
 
         {/* Active Threshold Alerts Banner */}
         {visibleAlerts.length > 0 && (

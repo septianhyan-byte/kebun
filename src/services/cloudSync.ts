@@ -1389,12 +1389,16 @@ type ChildSubKey = 'w' | 't' | 'p' | 'e' | 's';
 
 export function subscribeSeasonRealtime(
   uid: string,
-  seasonMeta: CloudSeasonMeta,
+  seasonMetaOrGetter: CloudSeasonMeta | (() => CloudSeasonMeta),
   onHydratedSeason: (season: SeasonDocument) => void,
   onActivities: (activities: SupervisionActivity[]) => void,
   onError?: (msg: string) => void
 ): Unsubscribe {
-  const seasonId = seasonMeta.id;
+  const getSeasonMeta =
+    typeof seasonMetaOrGetter === 'function'
+      ? seasonMetaOrGetter
+      : () => seasonMetaOrGetter;
+  const seasonId = getSeasonMeta().id;
   const ghColPath = `users/${uid}/seasons/${seasonId}/greenhouses`;
 
   const ghBaseMap = new Map<
@@ -1428,6 +1432,7 @@ export function subscribeSeasonRealtime(
       }
     }
 
+    const seasonMeta = getSeasonMeta();
     const orderedIds = [
       ...seasonMeta.greenhouseOrder.filter((id) => ghBaseMap.has(id)),
       ...[...ghBaseMap.keys()].filter((id) => !seasonMeta.greenhouseOrder.includes(id)),

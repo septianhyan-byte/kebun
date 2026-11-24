@@ -111,10 +111,13 @@ export function useSWOfflineStatus() {
   const applyUpdate = async () => {
     const fn = (window as unknown as { __melonflowUpdateSW?: (reload?: boolean) => Promise<void> }).__melonflowUpdateSW;
     if (fn) {
-      await fn(true);
-    } else {
-      window.location.reload();
+      try {
+        await fn(true);
+      } catch {
+        // fallback to hard reload below
+      }
     }
+    window.location.reload();
   };
 
   return { offlineReady, needRefresh, applyUpdate };
